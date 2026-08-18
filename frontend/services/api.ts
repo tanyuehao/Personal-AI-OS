@@ -230,6 +230,11 @@ export const voiceApi = {
     api.post('/voice/transcribe', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     }),
-  
+
   listModels: () => api.get('/voice/models'),
+};
+
+// ========== Graph API ==========
+export const graphApi = {
+  getData: () => api.get('/graph'),
 };

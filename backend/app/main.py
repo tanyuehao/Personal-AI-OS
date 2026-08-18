@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings as app_settings
 from app.core.database import init_db, close_db
-from app.api import auth, documents, knowledge, chat, memory, belief, decision, usage, agent, multimodal, voice
+from app.api import auth, documents, knowledge, chat, memory, belief, decision, usage, agent, multimodal, voice, graph
 from app.api import settings as settings_api
 
 
@@ -58,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(agent.router, prefix=app_settings.API_V1_PREFIX)
     app.include_router(multimodal.router, prefix=app_settings.API_V1_PREFIX)
     app.include_router(voice.router, prefix=app_settings.API_V1_PREFIX)
+    app.include_router(graph.router, prefix=app_settings.API_V1_PREFIX)
     
     # 健康检查
     @app.get("/health")
