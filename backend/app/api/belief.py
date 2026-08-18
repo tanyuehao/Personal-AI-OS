@@ -84,6 +84,56 @@ async def list_beliefs(
     )
 
 
+@router.get("/beliefs/timeline")
+async def get_belief_timeline(
+    current_user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取观点时间线数据
+    返回所有观点按时间排序，包含演化历史
+    """
+    result = await db.execute(
+        select(Belief)
+        .where(Belief.user_id == current_user_id)
+        .order_by(Belief.created_at.desc())
+    )
+    beliefs = result.scalars().all()
+
+    timeline = []
+    for belief in beliefs:
+        history_result = await db.execute(
+            select(BeliefHistory)
+            .where(BeliefHistory.belief_id == belief.belief_id)
+            .order_by(BeliefHistory.created_at)
+        )
+        histories = history_result.scalars().all()
+
+        timeline.append({
+            "belief_id": str(belief.belief_id),
+            "topic": belief.topic,
+            "content": belief.content,
+            "confidence": belief.confidence,
+            "status": belief.status,
+            "created_at": belief.created_at.isoformat(),
+            "updated_at": belief.updated_at.isoformat(),
+            "history": [
+                {
+                    "old_content": h.old_content,
+                    "new_content": h.new_content,
+                    "change_reason": h.change_reason,
+                    "created_at": h.created_at.isoformat()
+                }
+                for h in histories
+            ],
+            "change_count": len(histories)
+        })
+
+    timeline.sort(key=lambda x: x["created_at"])
+
+    return {"timeline": timeline}
+
+
 @router.get("/beliefs/{belief_id}", response_model=BeliefResponse)
 async def get_belief(
     belief_id: str,

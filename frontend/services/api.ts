@@ -177,6 +177,7 @@ export const cognitiveApi = {
   deleteBelief: (id: string) => api.delete(`/cognitive/beliefs/${id}`),
   
   getBeliefHistory: (id: string) => api.get(`/cognitive/beliefs/${id}/history`),
+  getTimeline: () => api.get('/cognitive/beliefs/timeline'),
 };
 
 // ========== Decision API ==========
