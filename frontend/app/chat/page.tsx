@@ -126,12 +126,31 @@ export default function ChatPage() {
             conversations.map(conv => (
               <div
                 key={conv.conversation_id}
-                className={`p-3 border-b cursor-pointer hover:bg-gray-50 ${
+                className={`p-3 border-b cursor-pointer hover:bg-gray-50 group ${
                   currentConversationId === conv.conversation_id ? 'bg-blue-50' : ''
                 }`}
                 onClick={() => loadConversation(conv.conversation_id)}
               >
-                <p className="font-medium text-sm truncate">{conv.title}</p>
+                <div className="flex justify-between items-start">
+                  <p className="font-medium text-sm truncate flex-1">{conv.title}</p>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm('确定删除这个对话吗？')) {
+                        aiApi.deleteConversation(conv.conversation_id).then(() => {
+                          setConversations(conversations.filter(c => c.conversation_id !== conv.conversation_id));
+                          if (currentConversationId === conv.conversation_id) {
+                            setCurrentConversationId(null);
+                            setMessages([]);
+                          }
+                        });
+                      }
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 ml-2 text-xs"
+                  >
+                    删除
+                  </button>
+                </div>
                 <p className="text-xs text-gray-400 mt-1">
                   {new Date(conv.updated_at).toLocaleString('zh-CN')}
                 </p>

@@ -5,6 +5,7 @@ AI 聊天接口
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, text
 
 from app.core.database import get_db
 from app.core.security import get_current_user_id
@@ -16,6 +17,7 @@ from app.schemas.chat import (
     MessageResponse
 )
 from app.services.ai_service import create_ai_service
+from app.models.conversation import Conversation, ConversationMessage
 
 router = APIRouter(prefix="/ai", tags=["AI 聊天"])
 
@@ -89,6 +91,52 @@ async def get_conversation_messages(
     )
     
     return [MessageResponse(**msg) for msg in messages]
+
+
+@router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_conversation(
+    conversation_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """删除对话及其所有消息"""
+    print(f"[DELETE] conversation_id={conversation_id}, user_id={current_user_id}")
+
+    # 验证对话属于当前用户
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.conversation_id == conversation_id,
+            Conversation.user_id == current_user_id
+        )
+    )
+    conversation = result.scalar_one_or_none()
+
+    if not conversation:
+        print(f"[DELETE] Conversation not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对话不存在"
+        )
+
+    print(f"[DELETE] Found conversation, deleting...")
+
+    # 使用同步 SQLite 删除
+    import sqlite3
+    from app.core.config import settings
+
+    db_path = settings.DATABASE_URL.replace("sqlite+aiosqlite:///", "")
+    print(f"[DELETE] DB path: {db_path}")
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM conversation_messages WHERE conversation_id = ?", (conversation_id,))
+    msgs_deleted = cursor.rowcount
+    cursor.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+    conv_deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+
+    print(f"[DELETE] Deleted {msgs_deleted} messages, {conv_deleted} conversations")
 
 
 @router.post("/summary")

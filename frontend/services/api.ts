@@ -112,6 +112,9 @@ export const aiApi = {
   
   getConversationMessages: (conversationId: string) =>
     api.get(`/ai/conversations/${conversationId}`),
+
+  deleteConversation: (conversationId: string) =>
+    api.delete(`/ai/conversations/${conversationId}`),
 };
 
 // ========== Memory API ==========

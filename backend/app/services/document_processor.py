@@ -109,11 +109,30 @@ class DocumentProcessor:
                     metadata=chunk.metadata
                 )
 
-            # 5. 生成摘要
-            document.status_message = "正在生成摘要..."
+            # 5. 生成 AI 摘要
+            document.status_message = "正在生成 AI 摘要..."
             await self.db.flush()
 
-            document.summary = text_content[:500] + "..." if len(text_content) > 500 else text_content
+            try:
+                from app.services.ai_service import create_ai_service
+                ai_service = create_ai_service()
+
+                # 截取前 2000 字符用于摘要
+                summary_input = text_content[:2000] if len(text_content) > 2000 else text_content
+                summary_prompt = f"""请为以下文档生成一个简洁的摘要（100-200字），提取核心观点和关键信息：
+
+{summary_input}"""
+
+                response = await ai_service.chat(
+                    messages=[{"role": "user", "content": summary_prompt}],
+                    system_prompt="你是一个专业的文档摘要助手。请简洁地总结文档的核心内容。",
+                    temperature=0.3,
+                    max_tokens=300
+                )
+                document.summary = response.content
+            except Exception:
+                # AI 摘要失败时，使用截断方式作为备用
+                document.summary = text_content[:500] + "..." if len(text_content) > 500 else text_content
 
             # 更新文档状态
             document.status = DocumentStatus.COMPLETED.value

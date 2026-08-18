@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.document import Document
 from app.models.knowledge import KnowledgeChunk
+from app.models.memory import Memory
 from app.models.conversation import Conversation, ConversationMessage
 from app.services.ai_service import create_ai_service, AIResponse
 
@@ -36,6 +37,86 @@ class RAGService:
             self.ai_service = create_ai_service()
         return self.ai_service
     
+    async def _search_memories(
+        self,
+        query: str,
+        user_id: str,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        搜索相关记忆（文本匹配 + 重要性排序）
+        """
+        try:
+            # 获取用户所有有效记忆，按重要性排序
+            result = await self.db.execute(
+                select(Memory).where(
+                    Memory.user_id == user_id,
+                    Memory.is_confirmed != "REJECTED"
+                ).order_by(Memory.importance.desc())
+                .limit(20)
+            )
+            all_memories = result.scalars().all()
+
+            if not all_memories:
+                return []
+
+            # 关键词匹配打分
+            query_lower = query.lower()
+            query_words = [w for w in query_lower.split() if len(w) > 1]
+            scored_memories = []
+
+            for mem in all_memories:
+                content_lower = mem.content.lower()
+                score = 0
+                for word in query_words:
+                    if word in content_lower:
+                        score += 1
+                # 结合关键词分数和重要性
+                final_score = score * 0.7 + mem.importance * 0.3
+                scored_memories.append((mem, final_score))
+
+            # 按综合分数排序
+            scored_memories.sort(key=lambda x: x[1], reverse=True)
+
+            # 返回 top N（至少返回 1 条）
+            top_memories = scored_memories[:limit]
+            if not top_memories:
+                top_memories = [(all_memories[0], 0.5)]
+
+            return [
+                {
+                    "memory_id": str(mem.memory_id),
+                    "content": mem.content,
+                    "memory_type": mem.memory_type,
+                    "importance": mem.importance,
+                    "relevance_score": round(score, 4)
+                }
+                for mem, score in top_memories
+            ]
+
+        except Exception:
+            return []
+
+    async def _build_memory_context(self, memories: List[Dict[str, Any]]) -> str:
+        """构建记忆上下文"""
+        if not memories:
+            return ""
+
+        parts = ["以下是关于该用户的记忆信息：\n"]
+        for i, mem in enumerate(memories, 1):
+            type_map = {
+                "FACT": "事实",
+                "EXPERIENCE": "经验",
+                "OPINION": "观点",
+                "DECISION": "决策",
+                "PREFERENCE": "偏好"
+            }
+            mem_type = type_map.get(mem["memory_type"], mem["memory_type"])
+            parts.append(f"[{i}] ({mem_type}) {mem['content']}")
+
+        parts.append("\n请参考以上记忆信息回答用户问题，使回答更加个性化。")
+        return "\n".join(parts)
+
     async def _search_knowledge(
         self,
         query: str,
@@ -140,12 +221,14 @@ class RAGService:
 
 你的职责是：
 1. 基于用户的个人知识库回答问题
-2. 提供准确、有依据的回答
-3. 引用知识来源
-4. 帮助用户理解和利用他们的知识资产
+2. 参考用户的记忆（偏好、经验、观点等）提供个性化回答
+3. 提供准确、有依据的回答
+4. 引用知识来源
+5. 帮助用户理解和利用他们的知识资产
 
 回答要求：
 - 基于知识库内容回答，不要编造信息
+- 参考用户记忆，使回答更加个性化
 - 如果知识库中没有相关信息，诚实说明
 - 提供清晰、简洁的回答
 - 在适当的地方引用来源"""
@@ -186,21 +269,27 @@ class RAGService:
     ) -> RAGResponse:
         """
         RAG 聊天
-        
+
         Args:
             user_id: 用户 ID
             message: 用户消息
             conversation_id: 对话 ID（可选）
             memory_enabled: 是否启用记忆
-        
+
         Returns:
             RAG 响应
         """
         # 1. 搜索相关知识
         sources = await self._search_knowledge(message, user_id)
-        
-        # 2. 构建上下文
+
+        # 2. 搜索相关记忆
+        memories = []
+        if memory_enabled:
+            memories = await self._search_memories(message, user_id)
+
+        # 3. 构建上下文（知识 + 记忆）
         context = await self._build_context(message, sources)
+        memory_context = await self._build_memory_context(memories)
         
         # 3. 获取或创建对话
         if conversation_id:
@@ -255,18 +344,22 @@ class RAGService:
                 "role": msg.role,
                 "content": msg.content
             })
-        
-        # 添加当前问题（带上下文）
-        if context:
-            messages.append({
-                "role": "user",
-                "content": f"{context}\n\n用户问题：{message}"
-            })
-        else:
-            messages.append({
-                "role": "user",
-                "content": message
-            })
+
+        # 添加当前问题（带知识上下文 + 记忆上下文）
+        user_content = message
+        if context or memory_context:
+            parts = []
+            if memory_context:
+                parts.append(memory_context)
+            if context:
+                parts.append(context)
+            parts.append(f"用户问题：{message}")
+            user_content = "\n\n".join(parts)
+
+        messages.append({
+            "role": "user",
+            "content": user_content
+        })
         
         # 7. 调用 AI
         ai_service = await self._get_ai_service()
@@ -297,12 +390,27 @@ class RAGService:
         if len(history_messages) <= 1:
             conversation.title = message[:50] + "..." if len(message) > 50 else message
             await self.db.flush()
-        
+
+        # 10. 自动提取记忆（后台异步）
+        if memory_enabled:
+            try:
+                all_messages = [
+                    {"role": "user", "content": message},
+                    {"role": "assistant", "content": ai_response.content}
+                ]
+                await self._extract_memories(
+                    user_id=user_id,
+                    conversation_id=str(conversation.conversation_id),
+                    messages=all_messages
+                )
+            except Exception:
+                pass  # 记忆提取失败不影响主流程
+
         return RAGResponse(
             answer=ai_response.content,
             sources=sources,
             conversation_id=str(conversation.conversation_id),
-            memory_used=None  # TODO: 实现记忆调用
+            memory_used=memories if memories else None
         )
     
     async def get_conversation_history(
