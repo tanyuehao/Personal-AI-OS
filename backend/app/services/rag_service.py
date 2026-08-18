@@ -47,11 +47,11 @@ class RAGService:
         搜索相关记忆（文本匹配 + 重要性排序）
         """
         try:
-            # 获取用户所有有效记忆，按重要性排序
+            # 获取用户所有已确认记忆，按重要性排序
             result = await self.db.execute(
                 select(Memory).where(
                     Memory.user_id == user_id,
-                    Memory.is_confirmed != "REJECTED"
+                    Memory.is_confirmed == "CONFIRMED"
                 ).order_by(Memory.importance.desc())
                 .limit(20)
             )

@@ -139,6 +139,12 @@ export const memoryApi = {
     api.post('/memory/search', params),
   
   stats: () => api.get('/memory/stats/summary'),
+  candidates: (params?: { limit?: number }) =>
+    api.get('/memory/candidates', { params }),
+  confirm: (id: string) => api.post(`/memory/${id}/confirm`),
+  reject: (id: string) => api.post(`/memory/${id}/reject`),
+  confirmAll: () => api.post('/memory/confirm-all'),
+  rejectAll: () => api.post('/memory/reject-all'),
 };
 
 // ========== Settings API ==========
