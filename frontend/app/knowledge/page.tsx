@@ -16,14 +16,54 @@ interface Document {
 
 export default function KnowledgePage() {
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [filteredDocuments, setFilteredDocuments] = useState<Document[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 搜索过滤器
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterType, setFilterType] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [sortBy, setSortBy] = useState<'date' | 'name' | 'size'>('date');
+
   useEffect(() => {
     loadDocuments();
   }, []);
+
+  // 过滤文档
+  useEffect(() => {
+    let result = [...documents];
+
+    // 搜索过滤
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(doc =>
+        doc.file_name.toLowerCase().includes(query) ||
+        (doc.summary && doc.summary.toLowerCase().includes(query))
+      );
+    }
+
+    // 类型过滤
+    if (filterType) {
+      result = result.filter(doc => doc.file_type === filterType);
+    }
+
+    // 状态过滤
+    if (filterStatus) {
+      result = result.filter(doc => doc.status === filterStatus);
+    }
+
+    // 排序
+    result.sort((a, b) => {
+      if (sortBy === 'date') return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      if (sortBy === 'name') return a.file_name.localeCompare(b.file_name);
+      return b.file_size - a.file_size;
+    });
+
+    setFilteredDocuments(result);
+  }, [documents, searchQuery, filterType, filterStatus, sortBy]);
 
   // 处理上传队列
   useEffect(() => {
@@ -224,8 +264,76 @@ export default function KnowledgePage() {
         <div className="bg-white rounded-lg shadow-md p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold">文档列表</h2>
-            <span className="text-sm text-gray-500">{documents.length} 个文档</span>
+            <span className="text-sm text-gray-500">
+              {filteredDocuments.length} / {documents.length} 个文档
+            </span>
           </div>
+
+          {/* 搜索和过滤器 */}
+          {documents.length > 0 && (
+            <div className="flex flex-wrap gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
+              {/* 搜索框 */}
+              <div className="flex-1 min-w-[200px]">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="🔍 搜索文档名称或摘要..."
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              {/* 文件类型过滤 */}
+              <select
+                value={filterType}
+                onChange={e => setFilterType(e.target.value)}
+                className="border rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">全部类型</option>
+                <option value=".pdf">PDF</option>
+                <option value=".doc">Word</option>
+                <option value=".docx">Word</option>
+                <option value=".md">Markdown</option>
+                <option value=".txt">TXT</option>
+                <option value=".csv">CSV</option>
+                <option value=".xlsx">Excel</option>
+                <option value=".xls">Excel</option>
+              </select>
+
+              {/* 状态过滤 */}
+              <select
+                value={filterStatus}
+                onChange={e => setFilterStatus(e.target.value)}
+                className="border rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">全部状态</option>
+                <option value="COMPLETED">已完成</option>
+                <option value="PROCESSING">处理中</option>
+                <option value="FAILED">失败</option>
+              </select>
+
+              {/* 排序 */}
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value as any)}
+                className="border rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="date">按时间</option>
+                <option value="name">按名称</option>
+                <option value="size">按大小</option>
+              </select>
+
+              {/* 清除过滤 */}
+              {(searchQuery || filterType || filterStatus) && (
+                <button
+                  onClick={() => { setSearchQuery(''); setFilterType(''); setFilterStatus(''); }}
+                  className="text-sm text-blue-600 hover:text-blue-800"
+                >
+                  清除过滤
+                </button>
+              )}
+            </div>
+          )}
 
           {documents.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
@@ -233,9 +341,15 @@ export default function KnowledgePage() {
               <p>还没有上传任何文档</p>
               <p className="text-sm mt-2">拖拽文件到上方区域开始上传</p>
             </div>
+          ) : filteredDocuments.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <div className="text-4xl mb-4">🔍</div>
+              <p>没有匹配的文档</p>
+              <p className="text-sm mt-2">尝试调整搜索条件</p>
+            </div>
           ) : (
             <div className="space-y-3">
-              {documents.map((doc) => (
+              {filteredDocuments.map((doc) => (
                 <div
                   key={doc.document_id}
                   className="border rounded-lg p-4 hover:shadow-md transition-shadow flex items-start gap-4"
