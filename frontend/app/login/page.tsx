@@ -10,8 +10,8 @@ export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({
     username: '',
-    email: '',
-    password: ''
+    email: 'admin@personalai.com',
+    password: 'admin123'
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);

@@ -1,0 +1,13 @@
+{
+  "project": "Personal AI OS",
+  "format": "Markdown",
+  "documents": 25,
+  "baseline": "V0.1/V1.0 development documentation",
+  "default_model": "DeepSeek through Model Gateway",
+  "principles": [
+    "Open Source",
+    "No Financing",
+    "Local First",
+    "Data Ownership"
+  ]
+}
