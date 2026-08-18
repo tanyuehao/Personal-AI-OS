@@ -8,7 +8,7 @@
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115.0-009688.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-14-000000.svg)](https://nextjs.org/)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
 
 [English](README.md) | [简体中文](#简体中文) | [繁體中文](README_zh-TW.md)
 
@@ -22,13 +22,14 @@ Personal AI OS 是一个开源的个人认知 AI 系统。通过数据采集、�
 
 ## 核心功能
 
-- 📚 **个人知识库** — 上传文档，自动解析、切片、向量化
+- 📚 **个人知识库** — 拖拽上传文档，自动解析、切片、向量化
 - 💬 **AI 智能问答** — 基于你的个人资料进行回答
 - 🧠 **长期记忆** — 自动提取和管理重要信息
 - 🔗 **知识图谱** — 可视化知识关联关系
 - 🎯 **认知模型** — 理解你的思维方式和决策模式
 - 🤖 **AI Agent** — 专业助手帮你完成复杂任务
 - 📷 **多模态** — 图片识别和语音转写
+- ⚙️ **灵活设置** — 切换 AI 提供商，调整温度参数，配置模型
 - 📊 **使用量统计** — 追踪 API 使用情况和速率限制
 
 ## 技术栈
@@ -125,7 +126,8 @@ Personal-AI-OS/
 
 - [x] v0.1.0 — MVP：知识库、AI 问答、记忆、Agent
 - [x] v0.2.0 — 记忆集成、知识图谱、自动摘要
-- [ ] v0.3.0 — 拖拽上传、设置增强、错误处理
+- [x] v0.3.0 — 拖拽上传、设置增强、Toast 提示
+- [ ] v0.4.0 — 性能优化、测试、文档
 - [ ] v1.0.0 — 完整认知模型、决策引擎
 
 ## 贡献

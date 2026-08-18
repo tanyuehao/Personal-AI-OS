@@ -8,7 +8,7 @@
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115.0-009688.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-14-000000.svg)](https://nextjs.org/)
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
 
 [English](#english) | [简体中文](README_zh-CN.md) | [繁體中文](README_zh-TW.md)
 
@@ -22,13 +22,14 @@ Personal AI OS is an open-source personal cognitive AI system. It helps AI gradu
 
 ## Core Features
 
-- 📚 **Personal Knowledge Base** — Upload documents, auto-parse, chunk, and vectorize
+- 📚 **Personal Knowledge Base** — Upload documents with drag & drop, auto-parse, chunk, and vectorize
 - 💬 **AI-Powered Q&A** — Answer questions based on your personal knowledge
 - 🧠 **Long-term Memory** — Automatically extract and manage important information
 - 🔗 **Knowledge Graph** — Interactive visualization of your knowledge connections
 - 🎯 **Cognitive Model** — Understand your thinking patterns and decision styles
 - 🤖 **AI Agents** — Specialized assistants for business, investment, writing, and review
 - 📷 **Multimodal** — Image recognition and voice transcription
+- ⚙️ **Flexible Settings** — Switch AI providers, adjust temperature, configure models
 - 📊 **Usage Analytics** — Track API usage and rate limits
 
 ## Tech Stack
@@ -125,7 +126,8 @@ Personal-AI-OS/
 
 - [x] v0.1.0 — MVP: Knowledge base, AI chat, Memory, Agents
 - [x] v0.2.0 — Memory integration, Knowledge graph, Auto summarization
-- [ ] v0.3.0 — Drag upload, Settings enhancement, Error handling
+- [x] v0.3.0 — Drag upload, Settings enhancement, Toast notifications
+- [ ] v0.4.0 — Performance optimization, Testing, Documentation
 - [ ] v1.0.0 — Full cognitive model, Decision engine
 
 ## Contributing
