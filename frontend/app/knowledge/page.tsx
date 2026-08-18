@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { documentApi } from '@/services/api';
+import toast from 'react-hot-toast';
 
 interface Document {
   document_id: string;
@@ -36,7 +37,7 @@ export default function KnowledgePage() {
       const response = await documentApi.list();
       setDocuments(response.data.items);
     } catch (error) {
-      console.error('加载文档失败:', error);
+      toast.error('加载文档失败');
     }
   };
 
@@ -55,8 +56,7 @@ export default function KnowledgePage() {
       await documentApi.upload(formData);
       await loadDocuments();
     } catch (error) {
-      console.error('上传失败:', error);
-      alert(`${file.name} 上传失败`);
+      toast.error(`${file.name} 上传失败`);
     } finally {
       setIsUploading(false);
     }
@@ -69,11 +69,11 @@ export default function KnowledgePage() {
     const validFiles = fileArray.filter(file => {
       const ext = '.' + file.name.split('.').pop()?.toLowerCase();
       if (!allowedTypes.includes(ext)) {
-        alert(`${file.name} 格式不支持`);
+        toast.error(`${file.name} 格式不支持`);
         return false;
       }
       if (file.size > 50 * 1024 * 1024) {
-        alert(`${file.name} 超过 50MB 限制`);
+        toast.error(`${file.name} 超过 50MB 限制`);
         return false;
       }
       return true;
@@ -130,7 +130,7 @@ export default function KnowledgePage() {
       await documentApi.delete(documentId);
       await loadDocuments();
     } catch (error) {
-      console.error('删除失败:', error);
+      toast.error('删除失败');
     }
   };
 

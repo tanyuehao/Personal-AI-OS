@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { settingsApi } from '@/services/api';
+import toast from 'react-hot-toast';
 
 interface Model { id: string; name: string; }
 interface Models { chat: Model[]; embedding: Model[]; rerank: Model[]; image: Model[]; }
@@ -65,9 +66,9 @@ export default function SettingsPage() {
 
   useEffect(() => { loadSettings(); }, []);
 
-  const loadSettings = async () => { try { const r = await settingsApi.get(); setSettings(r.data); if (r.data.siliconflow_api_key) loadModels(r.data.siliconflow_api_key); } catch (e) { console.error(e); } };
-  const loadModels = async (apiKey: string) => { setIsLoadingModels(true); try { const r = await settingsApi.getModels(apiKey); setModels(r.data); } catch (e) { console.error(e); } setIsLoadingModels(false); };
-  const handleSave = async () => { if (!settings) return; setIsSaving(true); try { await settingsApi.update(settings); alert('保存成功！'); } catch (e) { alert('保存失败'); } setIsSaving(false); };
+  const loadSettings = async () => { try { const r = await settingsApi.get(); setSettings(r.data); if (r.data.siliconflow_api_key) loadModels(r.data.siliconflow_api_key); } catch (e) { toast.error('加载设置失败'); } };
+  const loadModels = async (apiKey: string) => { setIsLoadingModels(true); try { const r = await settingsApi.getModels(apiKey); setModels(r.data); } catch (e) { toast.error('加载模型列表失败'); } setIsLoadingModels(false); };
+  const handleSave = async () => { if (!settings) return; setIsSaving(true); try { await settingsApi.update(settings); toast.success('保存成功！'); } catch (e) { toast.error('保存失败'); } setIsSaving(false); };
   const handleApiKeyChange = (key: string) => { if (settings) { setSettings({ ...settings, siliconflow_api_key: key }); if (key.length > 10) loadModels(key); } };
 
   if (!settings) return <div className="p-8">加载中...</div>;

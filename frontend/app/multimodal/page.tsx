@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react';
 import { multimodalApi, voiceApi } from '@/services/api';
+import toast from 'react-hot-toast';
 
 export default function MultimodalPage() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -38,7 +39,7 @@ export default function MultimodalPage() {
       });
       setResult(response.data.answer);
     } catch (error) {
-      console.error(error);
+      toast.error('图片分析失败');
       setResult('分析失败，请重试');
     }
     setIsAnalyzing(false);
@@ -62,7 +63,7 @@ export default function MultimodalPage() {
           const response = await voiceApi.transcribe(formData);
           setTranscription(response.data.text);
         } catch (error) {
-          console.error(error);
+          toast.error('语音转写失败');
         }
 
         stream.getTracks().forEach(track => track.stop());
@@ -71,7 +72,7 @@ export default function MultimodalPage() {
       mediaRecorder.start();
       setIsRecording(true);
     } catch (error) {
-      console.error('无法访问麦克风:', error);
+      toast.error('无法访问麦克风');
     }
   };
 

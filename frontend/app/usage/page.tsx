@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usageApi } from '@/services/api';
+import toast from 'react-hot-toast';
 
 interface UsageStats {
   total_requests: number;
@@ -32,7 +33,7 @@ export default function UsagePage() {
       const response = await usageApi.getStats();
       setStats(response.data);
     } catch (error) {
-      console.error(error);
+      toast.error('加载使用量失败');
     }
     setLoading(false);
   };

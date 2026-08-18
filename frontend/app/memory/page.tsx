@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { memoryApi } from '@/services/api';
+import toast from 'react-hot-toast';
 
 interface Memory {
   memory_id: string;
@@ -50,7 +51,7 @@ export default function MemoryPage() {
       });
       setMemories(response.data.items);
     } catch (error) {
-      console.error('加载记忆失败:', error);
+      toast.error('加载记忆失败');
     }
   };
 
@@ -59,7 +60,7 @@ export default function MemoryPage() {
       const response = await memoryApi.stats();
       setStats(response.data);
     } catch (error) {
-      console.error('加载统计失败:', error);
+      toast.error('加载统计失败');
     }
   };
 
@@ -73,7 +74,7 @@ export default function MemoryPage() {
       await loadMemories();
       await loadStats();
     } catch (error) {
-      console.error('创建记忆失败:', error);
+      toast.error('创建记忆失败');
     }
   };
 
@@ -85,7 +86,7 @@ export default function MemoryPage() {
       await loadMemories();
       await loadStats();
     } catch (error) {
-      console.error('删除失败:', error);
+      toast.error('删除失败');
     }
   };
 

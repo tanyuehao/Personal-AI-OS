@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { aiApi } from '@/services/api';
+import toast from 'react-hot-toast';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -44,7 +45,7 @@ export default function ChatPage() {
       const response = await aiApi.listConversations();
       setConversations(response.data);
     } catch (error) {
-      console.error('加载对话列表失败:', error);
+      toast.error('加载对话列表失败');
     }
   };
 
@@ -59,7 +60,7 @@ export default function ChatPage() {
       setMessages(msgs);
       setCurrentConversationId(conversationId);
     } catch (error) {
-      console.error('加载对话失败:', error);
+      toast.error('加载对话失败');
     }
   };
 
@@ -94,7 +95,7 @@ export default function ChatPage() {
       // 刷新对话列表
       await loadConversations();
     } catch (error) {
-      console.error('发送消息失败:', error);
+      toast.error('发送消息失败');
       const errorMessage: Message = {
         role: 'assistant',
         content: '抱歉，发生了错误。请稍后重试。'

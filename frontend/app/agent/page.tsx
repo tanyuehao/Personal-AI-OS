@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { agentApi } from '@/services/api';
+import toast from 'react-hot-toast';
 
 interface Agent {
   type: string;
@@ -38,7 +39,7 @@ export default function AgentPage() {
       const response = await agentApi.list();
       setAgents(response.data.agents);
     } catch (error) {
-      console.error(error);
+      toast.error('加载 Agent 失败');
     }
   };
 
@@ -47,7 +48,7 @@ export default function AgentPage() {
       const response = await agentApi.listTasks();
       setTasks(response.data.items);
     } catch (error) {
-      console.error(error);
+      toast.error('加载任务失败');
     }
   };
 
@@ -67,7 +68,7 @@ export default function AgentPage() {
       setCurrentResult(response.data.result);
       await loadTasks();
     } catch (error) {
-      console.error(error);
+      toast.error('Agent 执行失败');
       setCurrentResult('执行失败，请重试');
     }
 

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { decisionApi, cognitiveApi } from '@/services/api';
+import toast from 'react-hot-toast';
 
 interface Decision {
   decision_id: string;
@@ -56,7 +57,7 @@ export default function DecisionCenterPage() {
       const response = await decisionApi.list();
       setDecisions(response.data.items);
     } catch (error) {
-      console.error('加载决策失败:', error);
+      toast.error('加载决策失败');
     }
   };
 
@@ -65,7 +66,7 @@ export default function DecisionCenterPage() {
       const response = await cognitiveApi.listBeliefs();
       setBeliefs(response.data.items);
     } catch (error) {
-      console.error('加载观点失败:', error);
+      toast.error('加载观点失败');
     }
   };
 
@@ -86,7 +87,7 @@ export default function DecisionCenterPage() {
       setIsCreating(false);
       await loadDecisions();
     } catch (error) {
-      console.error('创建决策失败:', error);
+      toast.error('创建决策失败');
     }
   };
 
@@ -97,7 +98,7 @@ export default function DecisionCenterPage() {
       await decisionApi.delete(decisionId);
       await loadDecisions();
     } catch (error) {
-      console.error('删除失败:', error);
+      toast.error('删除失败');
     }
   };
 

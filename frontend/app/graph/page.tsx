@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { graphApi } from '@/services/api';
+import toast from 'react-hot-toast';
 
 interface GraphNode {
   id: string;
@@ -76,7 +77,7 @@ export default function GraphPage() {
       setEdges(data.edges);
       setStats(data.stats);
     } catch (error) {
-      console.error('Failed to load graph data:', error);
+      toast.error('加载图谱数据失败');
     }
     setLoading(false);
   };
