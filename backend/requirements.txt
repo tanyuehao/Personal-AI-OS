@@ -1,0 +1,42 @@
+# FastAPI 核心
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+
+# 数据库
+sqlalchemy==2.0.35
+asyncpg==0.29.0
+aiosqlite==0.20.0
+alembic==1.13.2
+
+# 数据校验
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# 认证
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.0
+cryptography==43.0.1
+
+# AI & 向量
+openai==1.51.0
+pgvector==0.3.5
+llama-index-core==0.11.10
+
+# 缓存
+redis==5.1.1
+
+# 工具
+python-dotenv==1.0.1
+httpx==0.27.2
+aiofiles==24.1.0
+
+# 测试
+pytest==8.3.3
+pytest-asyncio==0.24.0
+
+# 文档解析
+PyPDF2==3.0.1
+python-docx==1.1.2
+openpyxl==3.1.5

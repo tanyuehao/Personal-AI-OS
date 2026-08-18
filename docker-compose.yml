@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  # 前端服务
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    networks:
+      - personal-ai-os
+
+  # 后端 API 服务
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    depends_on:
+      - database
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@database:5432/personal_ai_os
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - personal-ai-os
+
+  # PostgreSQL 数据库
+  database:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=personal_ai_os
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - personal-ai-os
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - personal-ai-os
+
+  # 任务处理 Worker
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.tasks.worker worker --loglevel=info
+    depends_on:
+      - database
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@database:5432/personal_ai_os
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - personal-ai-os
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:
+
+networks:
+  personal-ai-os:
+    driver: bridge
