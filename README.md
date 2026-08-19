@@ -8,7 +8,7 @@
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115.0-009688.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-14-000000.svg)](https://nextjs.org/)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
 
 [English](#english) | [简体中文](README_zh-CN.md) | [繁體中文](README_zh-TW.md)
 
@@ -130,6 +130,7 @@ Personal-AI-OS/
 - [x] v0.4.0 — Memory candidates, Opinion timeline, Search filters, Test suite
 - [x] v0.5.0 — Data export, Performance optimization, Docker deployment
 - [x] v1.0.0 — Cognitive engine, Reflection, E2E tests, Security tests
+- [x] v1.1.0 — Decision style, Knowledge graph modeling, Memory network, Communication style
 
 ## Contributing
 
