@@ -203,6 +203,11 @@ function Create-GitHubRelease {
         Write-Host "  gh CLI 未安装，跳过自动创建 Release" -ForegroundColor Yellow
         Write-Host "  请手动创建: https://github.com/$REPO/releases/new" -ForegroundColor Yellow
     }
+    
+    Write-Host ""
+    Write-Host "  GitHub Actions 将自动:" -ForegroundColor Yellow
+    Write-Host "  1. 构建 Docker 镜像并推送到 Docker Hub 和 GHCR" -ForegroundColor Yellow
+    Write-Host "  2. 构建 Python 包并推送到 PyPI" -ForegroundColor Yellow
 }
 
 function Get-ReleaseBody {
