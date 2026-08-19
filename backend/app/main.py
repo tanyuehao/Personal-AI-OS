@@ -12,7 +12,7 @@ from app.core.config import settings as app_settings
 from app.core.database import init_db, close_db
 from app.core.logging import setup_logging, RequestLoggingMiddleware
 from app.core.errors import AppException, ErrorCode
-from app.api import auth, documents, knowledge, chat, memory, belief, decision, usage, agent, multimodal, voice, graph, export, cognitive, reflection, decision_style, knowledge_graph, memory_network
+from app.api import auth, documents, knowledge, chat, memory, belief, decision, usage, agent, multimodal, voice, graph, export, cognitive, reflection, decision_style, knowledge_graph, memory_network, communication_style
 from app.api import settings as settings_api
 
 # 配置日志
@@ -107,6 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(decision_style.router, prefix=app_settings.API_V1_PREFIX)
     app.include_router(knowledge_graph.router, prefix=app_settings.API_V1_PREFIX)
     app.include_router(memory_network.router, prefix=app_settings.API_V1_PREFIX)
+    app.include_router(communication_style.router, prefix=app_settings.API_V1_PREFIX)
     
     # 健康检查
     @app.get("/health")

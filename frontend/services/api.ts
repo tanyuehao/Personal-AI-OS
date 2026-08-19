@@ -308,3 +308,12 @@ export const memoryNetworkApi = {
   getStrengths: () => api.get('/memory-network/strengths'),
   getTypes: () => api.get('/memory-network/types'),
 };
+
+// ========== Communication Style API ==========
+export const communicationStyleApi = {
+  getStyle: () => api.get('/cognitive/communication-style'),
+  analyzeStyle: () => api.post('/cognitive/communication-style/analyze'),
+  getHabits: () => api.get('/cognitive/communication-style/habits'),
+  getPatterns: () => api.get('/cognitive/communication-style/patterns'),
+  getTypes: () => api.get('/cognitive/communication-style/types'),
+};

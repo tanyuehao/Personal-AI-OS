@@ -234,9 +234,9 @@ class RAGService:
 
         return "\n".join(context_parts)
     
-    async def _get_system_prompt(self) -> str:
-        """获取系统提示词"""
-        return """你是 Personal AI OS 的 AI 助手，一个个人认知操作系统。
+    async def _get_system_prompt(self, user_id: str = None) -> str:
+        """获取系统提示词（支持个性化）"""
+        base_prompt = """你是 Personal AI OS 的 AI 助手，一个个人认知操作系统。
 
 你的职责是：
 1. 基于用户的个人知识库回答问题
@@ -253,6 +253,21 @@ class RAGService:
 - 必须引用来源：在回答中使用 [1]、[2] 等编号引用知识库内容
 - 区分"资料事实"和"AI推断"：明确标注哪些是知识库中的事实，哪些是你的推断
 - 不要把历史选择当成当前必然答案"""
+
+        # 如果有用户ID，尝试获取沟通风格并个性化
+        if user_id:
+            try:
+                from app.services.communication_style_analyzer import get_communication_style_analyzer
+                analyzer = get_communication_style_analyzer(self.db)
+                style = await analyzer.get_user_style(user_id)
+                if style:
+                    style_addition = analyzer.generate_system_prompt_addition(style)
+                    if style_addition:
+                        base_prompt += "\n\n" + style_addition
+            except Exception:
+                pass
+
+        return base_prompt
     
     async def _extract_memories(
         self,
@@ -420,7 +435,7 @@ class RAGService:
         
         # 7. 调用 AI
         ai_service = await self._get_ai_service()
-        system_prompt = await self._get_system_prompt()
+        system_prompt = await self._get_system_prompt(user_id)
         
         ai_response = await ai_service.chat(
             messages=messages,
