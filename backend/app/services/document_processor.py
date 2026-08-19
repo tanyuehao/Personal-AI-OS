@@ -46,6 +46,10 @@ class DocumentProcessor:
         if not document:
             raise Exception(f"文档不存在: {document_id}")
 
+        # 幂等性检查：如果文档已经处理完成，跳过
+        if document.status == DocumentStatus.COMPLETED.value:
+            return True
+
         try:
             # 更新状态为处理中
             document.status = DocumentStatus.PROCESSING.value

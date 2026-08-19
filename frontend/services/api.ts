@@ -251,3 +251,23 @@ export const exportApi = {
   exportAll: () => `${API_BASE_URL}/api/v1/export/all`,
   getStats: () => api.get('/export/stats'),
 };
+
+// ========== Cognitive Engine API ==========
+export const cognitiveEngineApi = {
+  extractBeliefs: (messages: Array<{role: string; content: string}>) =>
+    api.post('/cognitive/beliefs/extract', { messages }),
+  checkConflict: (content: string, topic?: string) =>
+    api.post('/cognitive/beliefs/check-conflict', { content, topic }),
+  linkDecision: (decision_id: string) =>
+    api.post('/cognitive/decisions/link', { decision_id }),
+  getMemoryScore: (params: { importance?: number; confidence?: number; frequency?: number; user_confirmed?: boolean }) =>
+    api.get('/cognitive/memory-score', { params }),
+};
+
+// ========== Reflection API ==========
+export const reflectionApi = {
+  findDuplicates: () => api.get('/reflection/duplicates'),
+  detectConflicts: () => api.get('/reflection/conflicts'),
+  getWeeklySummary: (days?: number) => api.get('/reflection/weekly-summary', { params: { days } }),
+  consolidate: () => api.post('/reflection/consolidate'),
+};

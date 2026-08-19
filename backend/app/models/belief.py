@@ -36,7 +36,7 @@ class Belief(Base):
     evolution_history = Column(JSONB, nullable=True)  # 演化历史
     
     # 状态
-    status = Column(String(20), default="ACTIVE")  # ACTIVE, ARCHIVED, REVISED
+    status = Column(String(20), default="ACTIVE")  # CANDIDATE, ACTIVE, ARCHIVED, REVISED
     
     # 时间戳
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

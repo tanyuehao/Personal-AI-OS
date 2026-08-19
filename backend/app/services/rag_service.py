@@ -97,22 +97,32 @@ class RAGService:
         except Exception:
             return []
 
-    async def _build_memory_context(self, memories: List[Dict[str, Any]]) -> str:
-        """构建记忆上下文"""
+    async def _build_memory_context(self, memories: List[Dict[str, Any]], max_tokens: int = 1000) -> str:
+        """构建记忆上下文（带 Token budget）"""
         if not memories:
             return ""
 
         parts = ["以下是关于该用户的记忆信息：\n"]
+        current_tokens = 10
+
+        type_map = {
+            "FACT": "事实",
+            "EXPERIENCE": "经验",
+            "OPINION": "观点",
+            "DECISION": "决策",
+            "PREFERENCE": "偏好"
+        }
+
         for i, mem in enumerate(memories, 1):
-            type_map = {
-                "FACT": "事实",
-                "EXPERIENCE": "经验",
-                "OPINION": "观点",
-                "DECISION": "决策",
-                "PREFERENCE": "偏好"
-            }
             mem_type = type_map.get(mem["memory_type"], mem["memory_type"])
-            parts.append(f"[{i}] ({mem_type}) {mem['content']}")
+            mem_text = f"[{i}] ({mem_type}) {mem['content']}"
+            mem_tokens = len(mem_text) * 2
+
+            if current_tokens + mem_tokens > max_tokens:
+                break
+
+            parts.append(mem_text)
+            current_tokens += mem_tokens
 
         parts.append("\n请参考以上记忆信息回答用户问题，使回答更加个性化。")
         return "\n".join(parts)
@@ -190,29 +200,38 @@ class RAGService:
     async def _build_context(
         self,
         query: str,
-        sources: List[Dict[str, Any]]
+        sources: List[Dict[str, Any]],
+        max_tokens: int = 3000
     ) -> str:
         """
-        构建上下文
-        
+        构建上下文（带 Token budget 控制）
+
         Args:
             query: 用户问题
             sources: 相关知识
-        
+            max_tokens: 最大 token 数（粗略估算：1 中文 ≈ 2 tokens）
+
         Returns:
             上下文字符串
         """
         if not sources:
             return ""
-        
+
         context_parts = ["以下是与问题相关的知识库内容：\n"]
-        
+        current_tokens = 10  # 预留开头
+
         for i, source in enumerate(sources, 1):
-            context_parts.append(f"[{i}] 来源：{source['document_name']}")
-            context_parts.append(f"内容：{source['content']}\n")
-        
+            source_text = f"[{i}] 来源：{source['document_name']}\n内容：{source['content']}\n"
+            source_tokens = len(source_text) * 2  # 粗略估算
+
+            if current_tokens + source_tokens > max_tokens:
+                break
+
+            context_parts.append(source_text)
+            current_tokens += source_tokens
+
         context_parts.append("请基于以上内容回答用户的问题。如果知识库中没有相关信息，请说明。")
-        
+
         return "\n".join(context_parts)
     
     async def _get_system_prompt(self) -> str:
@@ -231,7 +250,9 @@ class RAGService:
 - 参考用户记忆，使回答更加个性化
 - 如果知识库中没有相关信息，诚实说明
 - 提供清晰、简洁的回答
-- 在适当的地方引用来源"""
+- 必须引用来源：在回答中使用 [1]、[2] 等编号引用知识库内容
+- 区分"资料事实"和"AI推断"：明确标注哪些是知识库中的事实，哪些是你的推断
+- 不要把历史选择当成当前必然答案"""
     
     async def _extract_memories(
         self,
@@ -260,6 +281,41 @@ class RAGService:
             # 记忆提取失败不应该影响主流程
             print(f"记忆提取失败: {str(e)}")
 
+    async def _extract_beliefs(
+        self,
+        user_id: str,
+        messages: List[Dict[str, str]]
+    ):
+        """
+        从对话中提取观点候选
+        """
+        try:
+            from app.services.cognitive_engine import get_cognitive_engine
+            from app.models.belief import Belief
+
+            engine = get_cognitive_engine(self.db)
+            beliefs = await engine.extract_beliefs_from_conversation(
+                user_id=user_id,
+                messages=messages
+            )
+
+            # 保存观点候选（状态为 CANDIDATE）
+            for b in beliefs:
+                if b.topic and b.content:
+                    belief = Belief(
+                        user_id=user_id,
+                        topic=b.topic,
+                        content=b.content,
+                        confidence=b.confidence,
+                        status="CANDIDATE"
+                    )
+                    self.db.add(belief)
+
+            await self.db.flush()
+
+        except Exception as e:
+            print(f"观点提取失败: {str(e)}")
+
     async def chat(
         self,
         user_id: str,
@@ -287,9 +343,10 @@ class RAGService:
         if memory_enabled:
             memories = await self._search_memories(message, user_id)
 
-        # 3. 构建上下文（知识 + 记忆）
-        context = await self._build_context(message, sources)
-        memory_context = await self._build_memory_context(memories)
+        # 3. 构建上下文（知识 + 记忆），带 Token budget 控制
+        # 总预算 4000 tokens，知识占 3000，记忆占 1000
+        context = await self._build_context(message, sources, max_tokens=3000)
+        memory_context = await self._build_memory_context(memories, max_tokens=1000)
         
         # 3. 获取或创建对话
         if conversation_id:
@@ -391,7 +448,7 @@ class RAGService:
             conversation.title = message[:50] + "..." if len(message) > 50 else message
             await self.db.flush()
 
-        # 10. 自动提取记忆（后台异步）
+        # 10. 自动提取记忆和观点（后台异步）
         if memory_enabled:
             try:
                 all_messages = [
@@ -403,8 +460,14 @@ class RAGService:
                     conversation_id=str(conversation.conversation_id),
                     messages=all_messages
                 )
+
+                # 提取观点候选
+                await self._extract_beliefs(
+                    user_id=user_id,
+                    messages=all_messages
+                )
             except Exception:
-                pass  # 记忆提取失败不影响主流程
+                pass  # 提取失败不影响主流程
 
         return RAGResponse(
             answer=ai_response.content,

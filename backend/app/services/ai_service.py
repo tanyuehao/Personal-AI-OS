@@ -299,12 +299,64 @@ class LocalModelService(BaseAIService):
             return embeddings
 
 
+class RetryAIService(BaseAIService):
+    """带重试的 AI 服务"""
+
+    def __init__(self, service: BaseAIService, max_retries: int = 3, retry_delay: float = 1.0):
+        self.service = service
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000
+    ) -> AIResponse:
+        """带重试的聊天接口"""
+        import asyncio
+        last_error = None
+
+        for attempt in range(self.max_retries):
+            try:
+                return await self.service.chat(
+                    messages=messages,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+                continue
+
+        raise Exception(f"AI 服务重试 {self.max_retries} 次后失败: {str(last_error)}")
+
+    async def embed(self, texts: List[str]) -> List[List[float]]:
+        """带重试的 embedding 接口"""
+        import asyncio
+        last_error = None
+
+        for attempt in range(self.max_retries):
+            try:
+                return await self.service.embed(texts)
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+                continue
+
+        raise Exception(f"Embedding 服务重试 {self.max_retries} 次后失败: {str(last_error)}")
+
+
 class FallbackAIService(BaseAIService):
     """带降级的 AI 服务 - 自动尝试多个提供商"""
-    
+
     def __init__(self, services: List[BaseAIService]):
         self.services = services
-    
+
     async def chat(
         self,
         messages: List[Dict[str, str]],
@@ -314,7 +366,7 @@ class FallbackAIService(BaseAIService):
     ) -> AIResponse:
         """带降级的聊天接口"""
         last_error = None
-        
+
         for service in self.services:
             try:
                 return await service.chat(
@@ -326,7 +378,7 @@ class FallbackAIService(BaseAIService):
             except Exception as e:
                 last_error = e
                 continue
-        
+
         raise Exception(f"所有 AI 服务都失败了: {str(last_error)}")
     
     async def embed(self, texts: List[str]) -> List[List[float]]:
@@ -380,7 +432,10 @@ def create_ai_service(
 
         return FallbackAIService(services)
 
-    return _create_service(provider, api_key, model)
+    service = _create_service(provider, api_key, model)
+    if service:
+        return RetryAIService(service, max_retries=3, retry_delay=1.0)
+    return service
 
 
 def _create_service(
