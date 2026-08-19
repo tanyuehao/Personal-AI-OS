@@ -8,7 +8,7 @@
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115.0-009688.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-14-000000.svg)](https://nextjs.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
+[![Version](https://img.shields.io/badge/version-0.5.0-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
 
 [English](README.md) | [简体中文](README_zh-CN.md) | [繁體中文](#繁體中文)
 
@@ -128,7 +128,7 @@ Personal-AI-OS/
 - [x] v0.2.0 — 記憶整合、知識圖譜、自動摘要
 - [x] v0.3.0 — 拖曳上傳、設定增強、Toast 提示
 - [x] v0.4.0 — Memory 候選、觀點時間線、搜尋過濾、測試套件
-- [ ] v0.5.0 — 資料匯出、效能優化
+- [x] v0.5.0 — 資料匯出、效能優化、Docker 部署
 - [ ] v1.0.0 — 完整認知模型、決策引擎
 
 ## 貢獻
