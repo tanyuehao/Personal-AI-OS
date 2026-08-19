@@ -281,3 +281,30 @@ export const decisionStyleApi = {
     api.post('/cognitive/decision-style/recommendations', { decision_context }),
   getStyleTypes: () => api.get('/cognitive/decision-style/types'),
 };
+
+// ========== Knowledge Graph Modeling API ==========
+export const knowledgeGraphApi = {
+  getGraph: (params?: { entity_type?: string; limit?: number }) =>
+    api.get('/knowledge-graph', { params }),
+  buildGraph: (limit?: number) =>
+    api.post('/knowledge-graph/build', { limit: limit || 50 }),
+  getEntityConnections: (entity_name: string) =>
+    api.get(`/knowledge-graph/entity/${encodeURIComponent(entity_name)}`),
+  getTypes: () => api.get('/knowledge-graph/types'),
+};
+
+// ========== Memory Network API ==========
+export const memoryNetworkApi = {
+  getStats: () => api.get('/memory-network/stats'),
+  reinforce: (memory_id: string, reinforcement?: number) =>
+    api.post(`/memory-network/reinforce/${memory_id}`, null, { params: { reinforcement } }),
+  batchReinforce: (memory_ids: string[], reinforcement?: number) =>
+    api.post('/memory-network/batch-reinforce', memory_ids, { params: { reinforcement } }),
+  createAssociation: (data: { source_memory_id: string; target_memory_id: string; association_type?: string; strength?: number; context?: string }) =>
+    api.post('/memory-network/association', data),
+  recall: (memory_id: string, limit?: number) =>
+    api.get(`/memory-network/recall/${memory_id}`, { params: { limit } }),
+  cluster: () => api.post('/memory-network/cluster'),
+  getStrengths: () => api.get('/memory-network/strengths'),
+  getTypes: () => api.get('/memory-network/types'),
+};
