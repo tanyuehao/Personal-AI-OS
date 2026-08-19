@@ -4,7 +4,7 @@ Personal AI OS - Knowledge Chunk Model
 """
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey
+from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 
@@ -44,6 +44,11 @@ class KnowledgeChunk(Base):
 
     # 关联关系
     document = relationship("Document", back_populates="chunks")
+
+    # 复合索引
+    __table_args__ = (
+        Index("ix_chunk_document_index", "document_id", "chunk_index"),
+    )
 
     def __repr__(self):
         return f"<KnowledgeChunk {self.chunk_id}>"

@@ -298,6 +298,25 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* 数据导出 */}
+        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4">📦 数据导出</h2>
+          <p className="text-gray-600 mb-4">
+            导出你的所有数据，包括文档、记忆、观点、决策和对话记录。
+          </p>
+          <button
+            onClick={() => {
+              const token = localStorage.getItem('access_token');
+              if (token) {
+                window.open(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/export/all?token=${token}`, '_blank');
+              }
+            }}
+            className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700"
+          >
+            导出所有数据 (JSON)
+          </button>
+        </div>
+
         {/* 保存按钮 */}
         <div className="flex justify-end">
           <button

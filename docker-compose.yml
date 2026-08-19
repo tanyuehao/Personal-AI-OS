@@ -29,9 +29,12 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@database:5432/personal_ai_os
       - REDIS_URL=redis://redis:6379/0
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - DEFAULT_MODEL=${DEFAULT_MODEL:-gpt-4o-mini}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - AI_PROVIDER=${AI_PROVIDER:-siliconflow}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-deepseek-ai/DeepSeek-V3}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - EMBEDDING_DIMENSION=1024
     volumes:
       - uploads:/app/uploads
     networks:
@@ -58,23 +61,6 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    networks:
-      - personal-ai-os
-
-  # 任务处理 Worker
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    command: celery -A app.tasks.worker worker --loglevel=info
-    depends_on:
-      - database
-      - redis
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@database:5432/personal_ai_os
-      - REDIS_URL=redis://redis:6379/0
-    volumes:
-      - uploads:/app/uploads
     networks:
       - personal-ai-os
 

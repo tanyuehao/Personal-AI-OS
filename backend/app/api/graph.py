@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
+from app.services.cache import cache
 from app.core.security import get_current_user_id
 from app.models.document import Document
 from app.models.knowledge import KnowledgeChunk
@@ -24,6 +25,12 @@ async def get_graph_data(
     db: AsyncSession = Depends(get_db)
 ):
     """获取知识图谱数据（节点 + 关系）"""
+    # 尝试缓存
+    cache_key = f"graph:{current_user_id}"
+    cached_data = cache.get(cache_key)
+    if cached_data:
+        return cached_data
+
     nodes = []
     edges = []
     node_map = {}
@@ -224,3 +231,8 @@ async def get_graph_data(
             "total_edges": len(unique_edges)
         }
     }
+
+    # 存储缓存（60秒）
+    cache.set(cache_key, result, ttl=60)
+
+    return result

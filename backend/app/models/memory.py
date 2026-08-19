@@ -5,7 +5,7 @@ Personal AI OS - Memory Model
 import uuid
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, Float, DateTime, Text, ForeignKey
+from sqlalchemy import Column, String, Integer, Float, DateTime, Text, ForeignKey, Index
 from app.core.types import CompatibleUUID as UUID
 from sqlalchemy.orm import relationship
 
@@ -57,6 +57,13 @@ class Memory(Base):
     
     # 关联关系
     user = relationship("User", back_populates="memories")
-    
+
+    # 复合索引（优化常用查询）
+    __table_args__ = (
+        Index("ix_memory_user_confirmed", "user_id", "is_confirmed"),
+        Index("ix_memory_user_type", "user_id", "memory_type"),
+        Index("ix_memory_user_importance", "user_id", "importance"),
+    )
+
     def __repr__(self):
         return f"<Memory {self.memory_type}: {self.content[:50]}>"

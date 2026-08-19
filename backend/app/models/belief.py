@@ -4,7 +4,7 @@ Personal AI OS - Belief Model
 """
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Float, DateTime, Text, ForeignKey
+from sqlalchemy import Column, String, Float, DateTime, Text, ForeignKey, Index
 from app.core.types import CompatibleJSON as JSONB, CompatibleUUID as UUID
 from sqlalchemy.orm import relationship
 
@@ -41,7 +41,12 @@ class Belief(Base):
     # 时间戳
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-    
+
+    # 复合索引
+    __table_args__ = (
+        Index("ix_belief_user_status", "user_id", "status"),
+    )
+
     def __repr__(self):
         return f"<Belief {self.topic}: {self.content[:50]}>"
 

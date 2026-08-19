@@ -245,3 +245,9 @@ export const voiceApi = {
 export const graphApi = {
   getData: () => api.get('/graph'),
 };
+
+// ========== Export API ==========
+export const exportApi = {
+  exportAll: () => `${API_BASE_URL}/api/v1/export/all`,
+  getStats: () => api.get('/export/stats'),
+};
