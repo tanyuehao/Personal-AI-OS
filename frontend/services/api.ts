@@ -271,3 +271,13 @@ export const reflectionApi = {
   getWeeklySummary: (days?: number) => api.get('/reflection/weekly-summary', { params: { days } }),
   consolidate: () => api.post('/reflection/consolidate'),
 };
+
+// ========== Decision Style API ==========
+export const decisionStyleApi = {
+  getStyle: () => api.get('/cognitive/decision-style'),
+  analyzeStyle: () => api.post('/cognitive/decision-style/analyze'),
+  getPatterns: () => api.get('/cognitive/decision-style/patterns'),
+  getRecommendations: (decision_context: string) =>
+    api.post('/cognitive/decision-style/recommendations', { decision_context }),
+  getStyleTypes: () => api.get('/cognitive/decision-style/types'),
+};

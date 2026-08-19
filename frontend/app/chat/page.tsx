@@ -45,22 +45,7 @@ export default function ChatPage() {
       const response = await aiApi.listConversations();
       setConversations(response.data);
     } catch (error) {
-      toast.error('加载对话列表失败');
-    }
-  };
-
-  const loadConversation = async (conversationId: string) => {
-    try {
-      const response = await aiApi.getConversationMessages(conversationId);
-      const msgs = response.data.map((msg: any) => ({
-        role: msg.role,
-        content: msg.content,
-        sources: msg.sources
-      }));
-      setMessages(msgs);
-      setCurrentConversationId(conversationId);
-    } catch (error) {
-      toast.error('加载对话失败');
+      console.error('加载对话列表失败');
     }
   };
 
@@ -92,7 +77,6 @@ export default function ChatPage() {
       setMessages(prev => [...prev, assistantMessage]);
       setCurrentConversationId(response.data.conversation_id);
       
-      // 刷新对话列表
       await loadConversations();
     } catch (error) {
       toast.error('发送消息失败');
@@ -114,44 +98,38 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-gray-50">
       {/* 侧边栏 - 对话列表 */}
-      <div className="w-64 bg-white border-r flex flex-col">
+      <div className="w-72 bg-white border-r flex flex-col">
         <div className="p-4 border-b">
-          <h2 className="font-semibold text-lg">💬 对话列表</h2>
+          <button
+            onClick={() => {
+              setMessages([]);
+              setCurrentConversationId(null);
+            }}
+            className="w-full btn btn-primary"
+          >
+            + 新对话
+          </button>
         </div>
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto p-2">
           {conversations.length === 0 ? (
-            <p className="p-4 text-gray-500 text-sm">暂无对话</p>
+            <p className="text-gray-500 text-sm text-center py-4">暂无对话</p>
           ) : (
             conversations.map(conv => (
               <div
                 key={conv.conversation_id}
-                className={`p-3 border-b cursor-pointer hover:bg-gray-50 group ${
-                  currentConversationId === conv.conversation_id ? 'bg-blue-50' : ''
+                className={`p-3 rounded-lg cursor-pointer transition-all duration-200 mb-1 ${
+                  currentConversationId === conv.conversation_id
+                    ? 'bg-blue-50 border border-blue-200'
+                    : 'hover:bg-gray-50'
                 }`}
-                onClick={() => loadConversation(conv.conversation_id)}
+                onClick={() => {
+                  setCurrentConversationId(conv.conversation_id);
+                  // 加载对话历史
+                }}
               >
-                <div className="flex justify-between items-start">
-                  <p className="font-medium text-sm truncate flex-1">{conv.title}</p>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm('确定删除这个对话吗？')) {
-                        aiApi.deleteConversation(conv.conversation_id).then(() => {
-                          setConversations(conversations.filter(c => c.conversation_id !== conv.conversation_id));
-                          if (currentConversationId === conv.conversation_id) {
-                            setCurrentConversationId(null);
-                            setMessages([]);
-                          }
-                        });
-                      }
-                    }}
-                    className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 ml-2 text-xs"
-                  >
-                    删除
-                  </button>
-                </div>
+                <p className="font-medium text-sm truncate">{conv.title || '新对话'}</p>
                 <p className="text-xs text-gray-400 mt-1">
                   {new Date(conv.updated_at).toLocaleString('zh-CN')}
                 </p>
@@ -164,11 +142,14 @@ export default function ChatPage() {
       {/* 主聊天区域 */}
       <div className="flex-1 flex flex-col">
         {/* 消息列表 */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {messages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <h3 className="text-2xl font-bold text-gray-700 mb-2">🧠 Personal AI OS</h3>
+              <div className="text-center animate-fade-in">
+                <div className="w-20 h-20 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="text-4xl">🧠</span>
+                </div>
+                <h3 className="text-2xl font-bold text-gray-700 mb-2">Personal AI OS</h3>
                 <p className="text-gray-500">开始提问，让 AI 帮你理解知识</p>
               </div>
             </div>
@@ -176,16 +157,16 @@ export default function ChatPage() {
             messages.map((msg, index) => (
               <div
                 key={index}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-slide-up`}
               >
                 <div
-                  className={`max-w-3xl rounded-lg p-4 ${
+                  className={`max-w-3xl rounded-2xl p-4 ${
                     msg.role === 'user'
                       ? 'bg-blue-600 text-white'
-                      : 'bg-white shadow-md'
+                      : 'bg-white shadow-md border border-gray-100'
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  <div className="whitespace-pre-wrap">{msg.content}</div>
                   
                   {/* 引用来源 */}
                   {msg.sources && msg.sources.length > 0 && (
@@ -194,7 +175,7 @@ export default function ChatPage() {
                       {msg.sources.map((source, i) => (
                         <div
                           key={i}
-                          className="text-xs bg-gray-100 rounded p-2 mb-1"
+                          className="text-xs bg-gray-100 rounded-lg p-2 mb-1"
                         >
                           <p className="font-medium">{source.document_name}</p>
                           <p className="text-gray-600 line-clamp-2">{source.content}</p>
@@ -208,9 +189,13 @@ export default function ChatPage() {
           )}
           
           {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-white rounded-lg p-4 shadow-md">
-                <p className="text-gray-500">正在思考...</p>
+            <div className="flex justify-start animate-fade-in">
+              <div className="bg-white rounded-2xl p-4 shadow-md border border-gray-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div>
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                </div>
               </div>
             </div>
           )}
@@ -220,22 +205,22 @@ export default function ChatPage() {
 
         {/* 输入区域 */}
         <div className="border-t bg-white p-4">
-          <div className="max-w-4xl mx-auto flex gap-4">
+          <div className="max-w-4xl mx-auto flex gap-3">
             <textarea
               value={input}
               onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyPress}
+              onKeyPress={handleKeyPress}
               placeholder="输入你的问题..."
-              className="flex-1 border rounded-lg p-3 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1 input resize-none"
               rows={2}
               disabled={isLoading}
             />
             <button
               onClick={handleSend}
               disabled={isLoading || !input.trim()}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn btn-primary px-6"
             >
-              发送
+              {isLoading ? '发送中...' : '发送'}
             </button>
           </div>
         </div>

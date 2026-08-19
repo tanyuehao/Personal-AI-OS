@@ -2,27 +2,35 @@
 Personal AI OS - Main Application
 主应用入口
 """
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings as app_settings
 from app.core.database import init_db, close_db
-from app.api import auth, documents, knowledge, chat, memory, belief, decision, usage, agent, multimodal, voice, graph, export, cognitive, reflection
+from app.core.logging import setup_logging, RequestLoggingMiddleware
+from app.core.errors import AppException, ErrorCode
+from app.api import auth, documents, knowledge, chat, memory, belief, decision, usage, agent, multimodal, voice, graph, export, cognitive, reflection, decision_style
 from app.api import settings as settings_api
+
+# 配置日志
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    print(f"Starting {app_settings.APP_NAME} v{app_settings.APP_VERSION}")
+    logger.info(f"Starting {app_settings.APP_NAME} v{app_settings.APP_VERSION}")
     await init_db()
-    print("Database initialized")
+    logger.info("Database initialized")
     
     yield
     
     await close_db()
-    print("Application closed")
+    logger.info("Application closed")
 
 
 def create_app() -> FastAPI:
@@ -45,6 +53,40 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
+    # 请求日志中间件
+    app.add_middleware(RequestLoggingMiddleware)
+    
+    # 全局异常处理
+    @app.exception_handler(AppException)
+    async def app_exception_handler(request: Request, exc: AppException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "data": None,
+                "error": {
+                    "code": exc.error_code.value,
+                    "message": exc.message,
+                    **(exc.app_detail or {})
+                },
+                "request_id": request.headers.get("X-Request-ID")
+            }
+        )
+    
+    @app.exception_handler(Exception)
+    async def general_exception_handler(request: Request, exc: Exception):
+        logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "data": None,
+                "error": {
+                    "code": ErrorCode.INTERNAL_ERROR.value,
+                    "message": "服务器内部错误"
+                },
+                "request_id": request.headers.get("X-Request-ID")
+            }
+        )
+    
     # 注册路由
     app.include_router(auth.router, prefix=app_settings.API_V1_PREFIX)
     app.include_router(documents.router, prefix=app_settings.API_V1_PREFIX)
@@ -62,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(export.router, prefix=app_settings.API_V1_PREFIX)
     app.include_router(cognitive.router, prefix=app_settings.API_V1_PREFIX)
     app.include_router(reflection.router, prefix=app_settings.API_V1_PREFIX)
+    app.include_router(decision_style.router, prefix=app_settings.API_V1_PREFIX)
     
     # 健康检查
     @app.get("/health")
@@ -71,6 +114,24 @@ def create_app() -> FastAPI:
             "app": app_settings.APP_NAME,
             "version": app_settings.APP_VERSION
         }
+    
+    @app.get("/health/live")
+    async def health_live():
+        return {"status": "alive"}
+    
+    @app.get("/health/ready")
+    async def health_ready():
+        # 检查数据库连接
+        try:
+            from app.core.database import engine
+            async with engine.connect() as conn:
+                await conn.execute("SELECT 1")
+            return {"status": "ready"}
+        except Exception as e:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not ready", "error": str(e)}
+            )
     
     @app.get("/")
     async def root():
