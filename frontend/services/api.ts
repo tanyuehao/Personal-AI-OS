@@ -356,3 +356,22 @@ export const learningApi = {
   getStats: () => api.get('/learning/stats'),
   updateModel: () => api.post('/learning/update-model'),
 };
+
+// ========== Reasoning API ==========
+export const reasoningApi = {
+  analyze: (query: string, reasoning_type?: string) =>
+    api.post('/reasoning/analyze', { query, reasoning_type }),
+  multiStep: (query: string) =>
+    api.post('/reasoning/multi-step', { query }),
+  analogy: (situation: string) =>
+    api.post('/reasoning/analogy', { situation }),
+  getHistory: (limit?: number) =>
+    api.get('/reasoning/history', { params: { limit } }),
+  getAnalogies: (limit?: number) =>
+    api.get('/reasoning/analogies', { params: { limit } }),
+  generateSuggestions: () =>
+    api.post('/reasoning/suggestions/generate'),
+  getSuggestions: (limit?: number) =>
+    api.get('/reasoning/suggestions', { params: { limit } }),
+  getTypes: () => api.get('/reasoning/types'),
+};
