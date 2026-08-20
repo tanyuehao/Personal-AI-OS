@@ -407,3 +407,23 @@ export const contextApi = {
   getCurrentContext: () => api.get('/context/current'),
   getTypes: () => api.get('/context/types'),
 };
+
+// ========== Autonomous Action API ==========
+export const autonomousApi = {
+  plan: (goal: string, context?: string) =>
+    api.post('/autonomous/plan', { goal, context }),
+  execute: (planId: string) =>
+    api.post(`/autonomous/execute/${planId}`),
+  approve: (planId: string) =>
+    api.post(`/autonomous/approve/${planId}`),
+  reject: (planId: string) =>
+    api.post(`/autonomous/reject/${planId}`),
+  getPlans: (status?: string, limit?: number) =>
+    api.get('/autonomous/plans', { params: { status, limit } }),
+  getPending: () => api.get('/autonomous/pending'),
+  getStats: () => api.get('/autonomous/stats'),
+  createRule: (data: { rule_name: string; description: string; rule_type: string; condition: string; action?: string }) =>
+    api.post('/autonomous/rules', data),
+  getRules: () => api.get('/autonomous/rules'),
+  getTypes: () => api.get('/autonomous/types'),
+};
