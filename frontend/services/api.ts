@@ -388,3 +388,22 @@ export const predictionApi = {
     api.get('/prediction/prepared', { params: { limit } }),
   getTypes: () => api.get('/prediction/types'),
 };
+
+// ========== Context Awareness API ==========
+export const contextApi = {
+  startSession: (data: { session_type?: string; title?: string; description?: string }) =>
+    api.post('/context/session/start', data),
+  endSession: (sessionId: string) =>
+    api.post(`/context/session/${sessionId}/end`),
+  getSessions: (limit?: number) =>
+    api.get('/context/sessions', { params: { limit } }),
+  logActivity: (data: { activity_type: string; action: string; details?: string; page?: string; tool?: string }) =>
+    api.post('/context/activity', data),
+  getActivities: (hours?: number, limit?: number) =>
+    api.get('/context/activities', { params: { hours, limit } }),
+  getActivityStats: () => api.get('/context/activities/stats'),
+  detectFocus: () => api.post('/context/focus/detect'),
+  getFocus: () => api.get('/context/focus'),
+  getCurrentContext: () => api.get('/context/current'),
+  getTypes: () => api.get('/context/types'),
+};
