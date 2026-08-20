@@ -143,12 +143,12 @@ export default function ProactivePage() {
             <div className="bg-white rounded-lg shadow-sm p-4 text-center">
               <div className="text-3xl mb-2">⚡</div>
               <div className="text-sm text-gray-500">精力水平</div>
-              <div className="font-medium">{(context.energy_level * 100).toFixed(0)}%</div>
+              <div className="font-medium">{((context.energy_level || 0) * 100).toFixed(0)}%</div>
             </div>
             <div className="bg-white rounded-lg shadow-sm p-4 text-center">
               <div className="text-3xl mb-2">🎯</div>
               <div className="text-sm text-gray-500">关注焦点</div>
-              <div className="font-medium">{context.active_focus.length} 个</div>
+              <div className="font-medium">{(context.active_focus || []).length} 个</div>
             </div>
             <div className="bg-white rounded-lg shadow-sm p-4 text-center">
               <div className="text-3xl mb-2">🔔</div>
@@ -164,11 +164,11 @@ export default function ProactivePage() {
         )}
 
         {/* 焦点和建议 */}
-        {context && context.active_focus.length > 0 && (
+        {context && (context.active_focus || []).length > 0 && (
           <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
             <h3 className="font-semibold mb-3">🎯 当前焦点</h3>
             <div className="flex flex-wrap gap-2">
-              {context.active_focus.map((f, i) => (
+              {(context.active_focus || []).map((f, i) => (
                 <span key={i} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
                   {f.name} ({(f.priority * 100).toFixed(0)}%)
                 </span>
