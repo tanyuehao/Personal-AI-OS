@@ -6,6 +6,7 @@ import { useState } from 'react';
 
 const menuItems = [
   { path: '/dashboard', name: '控制面板', icon: '🏠', color: 'text-blue-500' },
+  { path: '/proactive', name: '主动智能', icon: '🔮', color: 'text-violet-500' },
   { path: '/knowledge', name: '知识库', icon: '📚', color: 'text-green-500' },
   { path: '/chat', name: 'AI 聊天', icon: '💬', color: 'text-purple-500' },
   { path: '/memory', name: '记忆', icon: '🧠', color: 'text-yellow-500' },

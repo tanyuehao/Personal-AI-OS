@@ -317,3 +317,16 @@ export const communicationStyleApi = {
   getPatterns: () => api.get('/cognitive/communication-style/patterns'),
   getTypes: () => api.get('/cognitive/communication-style/types'),
 };
+
+// ========== Proactive Intelligence API ==========
+export const proactiveApi = {
+  getContext: () => api.get('/proactive/context'),
+  generateInsights: () => api.post('/proactive/insights/generate'),
+  getInsights: (unreadOnly?: boolean) =>
+    api.get('/proactive/insights', { params: { unread_only: unreadOnly } }),
+  markInsightRead: (id: string) => api.post(`/proactive/insights/${id}/read`),
+  dismissInsight: (id: string) => api.post(`/proactive/insights/${id}/dismiss`),
+  predictTrends: () => api.post('/proactive/trends/predict'),
+  getTrends: () => api.get('/proactive/trends'),
+  getTypes: () => api.get('/proactive/types'),
+};
