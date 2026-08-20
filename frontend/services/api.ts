@@ -375,3 +375,16 @@ export const reasoningApi = {
     api.get('/reasoning/suggestions', { params: { limit } }),
   getTypes: () => api.get('/reasoning/types'),
 };
+
+// ========== Prediction API ==========
+export const predictionApi = {
+  getPatterns: () => api.get('/prediction/patterns'),
+  predict: () => api.post('/prediction/predict'),
+  getPredictions: (limit?: number) =>
+    api.get('/prediction/predictions', { params: { limit } }),
+  prepareInfo: (prediction_id: string) =>
+    api.post(`/prediction/prepare/${prediction_id}`),
+  getPreparedInfos: (limit?: number) =>
+    api.get('/prediction/prepared', { params: { limit } }),
+  getTypes: () => api.get('/prediction/types'),
+};
