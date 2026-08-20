@@ -217,9 +217,9 @@ export default function ProactivePage() {
                       <span className="text-xs text-gray-500">{(pred.confidence * 100).toFixed(0)}%</span>
                     </div>
                     <p className="text-xs text-gray-600 mt-1">{pred.description}</p>
-                    {pred.suggested_actions.length > 0 && (
+                    {(pred.suggested_actions || []).length > 0 && (
                       <div className="mt-2">
-                        {pred.suggested_actions.slice(0, 2).map((a, i) => (
+                        {(pred.suggested_actions || []).slice(0, 2).map((a, i) => (
                           <div key={i} className="text-xs text-blue-600">→ {a}</div>
                         ))}
                       </div>
