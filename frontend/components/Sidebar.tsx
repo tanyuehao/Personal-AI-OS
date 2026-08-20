@@ -10,6 +10,7 @@ const menuItems = [
   { path: '/knowledge', name: '知识库', icon: '📚', color: 'text-green-500' },
   { path: '/chat', name: 'AI 聊天', icon: '💬', color: 'text-purple-500' },
   { path: '/memory', name: '记忆', icon: '🧠', color: 'text-yellow-500' },
+  { path: '/learning', name: '学习进度', icon: '📈', color: 'text-teal-500' },
   { path: '/graph', name: '知识图谱', icon: '🔗', color: 'text-indigo-500' },
   { path: '/agent', name: 'Agent', icon: '🤖', color: 'text-pink-500' },
   { path: '/multimodal', name: '多模态', icon: '📷', color: 'text-orange-500' },
@@ -17,6 +18,7 @@ const menuItems = [
   { path: '/decision-style', name: '决策风格', icon: '🧬', color: 'text-emerald-500' },
   { path: '/settings', name: '设置', icon: '⚙️', color: 'text-gray-500' },
   { path: '/usage', name: '使用量', icon: '📊', color: 'text-cyan-500' },
+  { path: '/help', name: '帮助', icon: '❓', color: 'text-gray-400' },
 ];
 
 export default function Sidebar() {

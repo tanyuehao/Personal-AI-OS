@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { decisionStyleApi } from '@/services/api';
 import toast from 'react-hot-toast';
 
@@ -28,13 +28,13 @@ interface Pattern {
   confidence: number;
 }
 
-const STYLE_INFO: Record<string, { name: string; icon: string; color: string; description: string }> = {
-  analytical: { name: '分析型', icon: '📊', color: 'blue', description: '系统性分析，数据驱动' },
-  intuitive: { name: '直觉型', icon: '💡', color: 'purple', description: '依赖直觉，快速决策' },
-  directive: { name: '指令型', icon: '🎯', color: 'red', description: '果断自信，结果导向' },
-  conceptual: { name: '概念型', icon: '🎨', color: 'green', description: '创新思维，长远视角' },
-  behavioral: { name: '行为型', icon: '🤝', color: 'yellow', description: '协作导向，人际敏感' },
-  hesitant: { name: '犹豫型', icon: '🤔', color: 'gray', description: '谨慎决策，信息依赖' },
+const STYLE_INFO: Record<string, { name: string; icon: string; color: string; description: string; traits: string[] }> = {
+  analytical: { name: '分析型', icon: '📊', color: 'blue', description: '系统性分析，数据驱动', traits: ['深度分析', '数据驱动', '系统性思考', '风险评估'] },
+  intuitive: { name: '直觉型', icon: '💡', color: 'purple', description: '依赖直觉，快速决策', traits: ['快速决策', '经验驱动', '信任直觉', '模式识别'] },
+  directive: { name: '指令型', icon: '🎯', color: 'red', description: '果断自信，结果导向', traits: ['果断决策', '快速执行', '自信', '结果导向'] },
+  conceptual: { name: '概念型', icon: '🎨', color: 'green', description: '创新思维，长远视角', traits: ['创新思维', '长远视角', '探索性', '开放性'] },
+  behavioral: { name: '行为型', icon: '🤝', color: 'yellow', description: '协作导向，人际敏感', traits: ['协作导向', '人际敏感', '团队考虑', '沟通优先'] },
+  hesitant: { name: '犹豫型', icon: '🤔', color: 'gray', description: '谨慎决策，信息依赖', traits: ['信息收集', '延迟决策', '风险厌恶', '完美主义'] },
 };
 
 const DIMENSIONS = [
@@ -55,10 +55,17 @@ export default function DecisionStylePage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [recommendationContext, setRecommendationContext] = useState('');
   const [recommendations, setRecommendations] = useState<string[]>([]);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (style && canvasRef.current) {
+      drawRadarChart();
+    }
+  }, [style]);
 
   const loadData = async () => {
     try {
@@ -96,6 +103,89 @@ export default function DecisionStylePage() {
     }
   };
 
+  const drawRadarChart = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || !style) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = canvas.width = canvas.offsetWidth * 2;
+    const height = canvas.height = canvas.offsetHeight * 2;
+    ctx.scale(2, 2);
+
+    const centerX = width / 4;
+    const centerY = height / 4;
+    const radius = Math.min(width, height) / 4 - 30;
+
+    ctx.clearRect(0, 0, width, height);
+
+    // 绘制背景圆圈
+    for (let i = 1; i <= 5; i++) {
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, (radius * i) / 5, 0, 2 * Math.PI);
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // 绘制轴线
+    DIMENSIONS.forEach((_, i) => {
+      const angle = (2 * Math.PI * i) / DIMENSIONS.length - Math.PI / 2;
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.lineTo(
+        centerX + radius * Math.cos(angle),
+        centerY + radius * Math.sin(angle)
+      );
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+
+    // 绘制数据点和连线
+    const values = DIMENSIONS.map(d => (style as any)[d.key] || 0.5);
+    ctx.beginPath();
+    values.forEach((val, i) => {
+      const angle = (2 * Math.PI * i) / DIMENSIONS.length - Math.PI / 2;
+      const x = centerX + radius * val * Math.cos(angle);
+      const y = centerY + radius * val * Math.sin(angle);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
+    ctx.fill();
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 绘制数据点
+    values.forEach((val, i) => {
+      const angle = (2 * Math.PI * i) / DIMENSIONS.length - Math.PI / 2;
+      const x = centerX + radius * val * Math.cos(angle);
+      const y = centerY + radius * val * Math.sin(angle);
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, 2 * Math.PI);
+      ctx.fillStyle = '#3b82f6';
+      ctx.fill();
+    });
+
+    // 绘制标签
+    DIMENSIONS.forEach((dim, i) => {
+      const angle = (2 * Math.PI * i) / DIMENSIONS.length - Math.PI / 2;
+      const labelRadius = radius + 25;
+      const x = centerX + labelRadius * Math.cos(angle);
+      const y = centerY + labelRadius * Math.sin(angle);
+
+      ctx.fillStyle = '#374151';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(dim.label, x, y);
+    });
+  };
+
   const getStyleColor = (style: string) => {
     const colors: Record<string, string> = {
       analytical: 'bg-blue-100 text-blue-800',
@@ -124,7 +214,7 @@ export default function DecisionStylePage() {
             disabled={analyzing}
             className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {analyzing ? '分析中...' : '重新分析'}
+            {analyzing ? '分析中...' : '🔄 重新分析'}
           </button>
         </div>
 
@@ -137,7 +227,7 @@ export default function DecisionStylePage() {
                 你的决策风格：{styleInfo.name}
               </h2>
               <p className="text-gray-600 mb-4">{style?.style_description}</p>
-              <div className="flex gap-2">
+              <div className="flex gap-2 mb-4">
                 <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStyleColor(style?.primary_style || '')}`}>
                   主要：{styleInfo.name}
                 </span>
@@ -147,20 +237,28 @@ export default function DecisionStylePage() {
                   </span>
                 )}
               </div>
-              {style?.last_analyzed_at && (
-                <p className="text-gray-400 text-sm mt-4">
-                  上次分析：{new Date(style.last_analyzed_at).toLocaleString('zh-CN')}
-                </p>
-              )}
+              <div className="flex flex-wrap gap-2">
+                {styleInfo.traits.map((trait, i) => (
+                  <span key={i} className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-sm">
+                    {trait}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* 风格维度 */}
+          {/* 雷达图 */}
           <div className="bg-white rounded-lg shadow-md p-6">
             <h3 className="text-xl font-semibold mb-4">风格维度</h3>
-            <div className="space-y-4">
+            <canvas ref={canvasRef} className="w-full h-64" />
+          </div>
+
+          {/* 维度详情 */}
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h3 className="text-xl font-semibold mb-4">维度详情</h3>
+            <div className="space-y-3">
               {DIMENSIONS.map(dim => {
                 const value = (style as any)?.[dim.key] || 0.5;
                 return (
@@ -169,17 +267,13 @@ export default function DecisionStylePage() {
                       <span className="text-gray-600">{dim.label}</span>
                       <span className="font-medium">{(value * 100).toFixed(0)}%</span>
                     </div>
-                    <div className="relative h-3 bg-gray-200 rounded-full">
+                    <div className="relative h-2 bg-gray-200 rounded-full">
                       <div
-                        className="absolute h-3 bg-gradient-to-r from-blue-400 to-blue-600 rounded-full transition-all"
+                        className="absolute h-2 bg-gradient-to-r from-blue-400 to-blue-600 rounded-full transition-all"
                         style={{ width: `${value * 100}%` }}
                       />
-                      <div
-                        className="absolute w-4 h-4 bg-white border-2 border-blue-600 rounded-full -top-0.5 transition-all"
-                        style={{ left: `calc(${value * 100}% - 8px)` }}
-                      />
                     </div>
-                    <div className="flex justify-between text-xs text-gray-400 mt-1">
+                    <div className="flex justify-between text-xs text-gray-400 mt-0.5">
                       <span>{dim.left}</span>
                       <span>{dim.right}</span>
                     </div>
@@ -188,31 +282,36 @@ export default function DecisionStylePage() {
               })}
             </div>
           </div>
+        </div>
 
-          {/* 决策模式 */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-xl font-semibold mb-4">决策模式</h3>
-            {patterns.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">暂无决策模式数据</p>
-            ) : (
-              <div className="space-y-4">
-                {patterns.map(pattern => (
-                  <div key={pattern.pattern_id} className="border rounded-lg p-4">
-                    <div className="flex justify-between items-start">
-                      <h4 className="font-medium">{pattern.pattern_name}</h4>
-                      <span className="text-sm text-gray-500">
-                        置信度: {(pattern.confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                    <p className="text-gray-600 text-sm mt-1">{pattern.description}</p>
-                    <span className="inline-block mt-2 px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">
-                      {pattern.pattern_type}
+        {/* 决策模式 */}
+        <div className="bg-white rounded-lg shadow-md p-6 mt-6">
+          <h3 className="text-xl font-semibold mb-4">决策模式</h3>
+          {patterns.length === 0 ? (
+            <p className="text-gray-500 text-center py-8">暂无决策模式数据</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {patterns.map(pattern => (
+                <div key={pattern.pattern_id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                  <div className="flex justify-between items-start">
+                    <h4 className="font-medium">{pattern.pattern_name}</h4>
+                    <span className="text-sm text-gray-500">
+                      置信度: {(pattern.confidence * 100).toFixed(0)}%
                     </span>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                  <p className="text-gray-600 text-sm mt-1">{pattern.description}</p>
+                  <div className="mt-2">
+                    <div className="w-full bg-gray-200 rounded-full h-1.5">
+                      <div
+                        className="bg-blue-500 h-1.5 rounded-full"
+                        style={{ width: `${pattern.confidence * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 决策建议 */}
