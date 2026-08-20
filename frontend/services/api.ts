@@ -330,3 +330,29 @@ export const proactiveApi = {
   getTrends: () => api.get('/proactive/trends'),
   getTypes: () => api.get('/proactive/types'),
 };
+
+// ========== Learning API ==========
+export const learningApi = {
+  // 修正
+  recordCorrection: (data: { conversation_id?: string; original_response: string; correction: string; correction_type?: string }) =>
+    api.post('/learning/corrections', data),
+  getCorrections: (limit?: number) =>
+    api.get('/learning/corrections', { params: { limit } }),
+
+  // 偏好
+  learnPreference: (data: { category: string; key: string; value: string; confidence?: number }) =>
+    api.post('/learning/preferences', data),
+  getPreferences: (category?: string) =>
+    api.get('/learning/preferences', { params: { category } }),
+
+  // 反馈
+  recordFeedback: (data: { conversation_id?: string; message_id?: string; rating: number; comment?: string; feedback_type?: string }) =>
+    api.post('/learning/feedback', data),
+  getFeedbackStats: () => api.get('/learning/feedback/stats'),
+
+  // 学习事件和统计
+  getEvents: (limit?: number) =>
+    api.get('/learning/events', { params: { limit } }),
+  getStats: () => api.get('/learning/stats'),
+  updateModel: () => api.post('/learning/update-model'),
+};

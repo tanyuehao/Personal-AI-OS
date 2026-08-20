@@ -331,6 +331,30 @@ class RAGService:
         except Exception as e:
             print(f"观点提取失败: {str(e)}")
 
+    async def _learn_from_conversation(
+        self,
+        user_id: str,
+        conversation_id: str,
+        user_message: str,
+        ai_response: str
+    ):
+        """
+        从对话中持续学习
+        """
+        try:
+            from app.services.continuous_learning import get_continuous_learning_engine
+
+            engine = get_continuous_learning_engine(self.db)
+            await engine.learn_from_conversation(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_message=user_message,
+                ai_response=ai_response
+            )
+
+        except Exception as e:
+            print(f"持续学习失败: {str(e)}")
+
     async def chat(
         self,
         user_id: str,
@@ -463,13 +487,14 @@ class RAGService:
             conversation.title = message[:50] + "..." if len(message) > 50 else message
             await self.db.flush()
 
-        # 10. 自动提取记忆和观点（后台异步）
+        # 10. 自动学习（后台异步）
         if memory_enabled:
             try:
                 all_messages = [
                     {"role": "user", "content": message},
                     {"role": "assistant", "content": ai_response.content}
                 ]
+                # 提取记忆
                 await self._extract_memories(
                     user_id=user_id,
                     conversation_id=str(conversation.conversation_id),
@@ -481,8 +506,16 @@ class RAGService:
                     user_id=user_id,
                     messages=all_messages
                 )
+
+                # 持续学习
+                await self._learn_from_conversation(
+                    user_id=user_id,
+                    conversation_id=str(conversation.conversation_id),
+                    user_message=message,
+                    ai_response=ai_response.content
+                )
             except Exception:
-                pass  # 提取失败不影响主流程
+                pass  # 学习失败不影响主流程
 
         return RAGResponse(
             answer=ai_response.content,
