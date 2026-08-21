@@ -8,7 +8,7 @@
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115.0-009688.svg)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-14-000000.svg)](https://nextjs.org/)
-[![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
+[![Version](https://img.shields.io/badge/version-1.1.3-blue.svg)](https://github.com/tanyuehao/Personal-AI-OS)
 
 [English](README.md) | [简体中文](README_zh-CN.md) | [繁體中文](#繁體中文)
 
@@ -132,6 +132,7 @@ Personal-AI-OS/
 - [x] v1.0.0 — 認知引擎、Reflection、E2E 測試、安全測試
 - [x] v1.1.0 — 決策風格、知識圖譜建模、記憶網路、溝通風格
 - [x] v1.1.2 — 主動智慧、持續學習、自主推理、預測需求、上下文感知
+- [x] v1.1.3 — 自我超越閉環、統一認知模型、自主行動、比你更聰明
 
 ## 貢獻
 
