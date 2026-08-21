@@ -439,3 +439,10 @@ export const smarterApi = {
   optimizeDecision: (problem: string, current_choice?: string) =>
     api.post('/smarter/optimize-decision', { problem, current_choice }),
 };
+
+// ========== Unified Cognitive Model API ==========
+export const cognitiveModelApi = {
+  getProfile: () => api.get('/cognitive-model/profile'),
+  getSummary: () => api.get('/cognitive-model/summary'),
+  getStats: () => api.get('/cognitive-model/stats'),
+};
