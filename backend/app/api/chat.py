@@ -100,8 +100,6 @@ async def delete_conversation(
     db: AsyncSession = Depends(get_db)
 ):
     """删除对话及其所有消息"""
-    print(f"[DELETE] conversation_id={conversation_id}, user_id={current_user_id}")
-
     # 验证对话属于当前用户
     result = await db.execute(
         select(Conversation).where(
@@ -112,31 +110,24 @@ async def delete_conversation(
     conversation = result.scalar_one_or_none()
 
     if not conversation:
-        print(f"[DELETE] Conversation not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="对话不存在"
         )
 
-    print(f"[DELETE] Found conversation, deleting...")
+    # 先删除消息（通过 ORM）
+    messages_result = await db.execute(
+        select(ConversationMessage).where(
+            ConversationMessage.conversation_id == conversation_id
+        )
+    )
+    messages = messages_result.scalars().all()
+    for msg in messages:
+        await db.delete(msg)
 
-    # 使用同步 SQLite 删除
-    import sqlite3
-    from app.core.config import settings
-
-    db_path = settings.DATABASE_URL.replace("sqlite+aiosqlite:///", "")
-    print(f"[DELETE] DB path: {db_path}")
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM conversation_messages WHERE conversation_id = ?", (conversation_id,))
-    msgs_deleted = cursor.rowcount
-    cursor.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
-    conv_deleted = cursor.rowcount
-    conn.commit()
-    conn.close()
-
-    print(f"[DELETE] Deleted {msgs_deleted} messages, {conv_deleted} conversations")
+    # 删除对话
+    await db.delete(conversation)
+    await db.flush()
 
 
 @router.post("/summary")
