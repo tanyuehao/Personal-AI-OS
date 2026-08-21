@@ -427,3 +427,15 @@ export const autonomousApi = {
   getRules: () => api.get('/autonomous/rules'),
   getTypes: () => api.get('/autonomous/types'),
 };
+
+// ========== Smarter Engine API ==========
+export const smarterApi = {
+  findBlindSpots: () => api.get('/smarter/blind-spots'),
+  counterArguments: (claim: string) =>
+    api.post('/smarter/counter-arguments', { claim }),
+  crossDomain: () => api.get('/smarter/cross-domain'),
+  bestPractices: (area?: string) =>
+    api.get('/smarter/best-practices', { params: { area } }),
+  optimizeDecision: (problem: string, current_choice?: string) =>
+    api.post('/smarter/optimize-decision', { problem, current_choice }),
+};
