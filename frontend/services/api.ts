@@ -446,3 +446,9 @@ export const cognitiveModelApi = {
   getSummary: () => api.get('/cognitive-model/summary'),
   getStats: () => api.get('/cognitive-model/stats'),
 };
+
+// ========== Self-Transcendence API ==========
+export const selfTranscendenceApi = {
+  runCycle: () => api.post('/self-transcendence/run'),
+  getHealth: () => api.get('/self-transcendence/health'),
+};
