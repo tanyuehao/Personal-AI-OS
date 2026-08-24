@@ -1,11 +1,19 @@
 """
 Personal AI OS - PostgreSQL Integration Tests
 PostgreSQL 集成测试 — canonical integration test
+
+运行条件: DATABASE_URL 必须是 postgresql+asyncpg://
+SQLite 环境跳过（无 pgvector，无法验证向量搜索召回）
 """
 import asyncio
 import pytest
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+from app.core.config import settings
+
+
+def _is_postgresql():
+    return "postgresql" in settings.DATABASE_URL
 
 
 async def poll_until(condition_fn, timeout_seconds=30, interval=0.5):
@@ -73,16 +81,22 @@ async def test_conversation_create_and_delete(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_document_upload_and_processing(client, auth_headers):
-    """E2E: 上传文档 → 处理 → 搜索 → AI问答 → 引用验证"""
+@pytest.mark.skipif(not _is_postgresql(), reason="Requires PostgreSQL + pgvector")
+async def test_aurora_rag_strict(client, auth_headers):
+    """
+    Aurora RAG canonical test — PostgreSQL + pgvector only
+
+    上传文档 → 处理 → chunk 验证 → 检索验证 → AI 问答 → citation 验证
+    所有断言必须通过，不允许 fallback 或放宽。
+    """
     # 1. 上传文档
     content = b"Project Aurora launch date is 2031-09-17."
     files = {"file": ("test_aurora.txt", content, "text/plain")}
-    upload_response = await client.post(
+    upload_r = await client.post(
         "/api/v1/documents/upload", files=files, headers=auth_headers, timeout=30
     )
-    assert upload_response.status_code == 201
-    document_id = upload_response.json()["document_id"]
+    assert upload_r.status_code == 201
+    document_id = upload_r.json()["document_id"]
 
     # 2. 等待处理完成
     async def check_doc():
@@ -90,37 +104,64 @@ async def test_document_upload_and_processing(client, auth_headers):
         if r.status_code == 200:
             d = r.json()
             if d["status"] == "COMPLETED": return d
-            if d["status"] == "FAILED": pytest.fail(f"FAILED: {d.get('status_message')}")
+            if d["status"] == "FAILED": pytest.fail(f"Doc processing FAILED: {d.get('status_message')}")
         return None
 
     doc_data = await poll_until(check_doc, timeout_seconds=60)
-    assert doc_data is not None, "Timed out"
+    assert doc_data is not None, "Document processing timed out — never reached COMPLETED"
     assert doc_data["status"] == "COMPLETED"
 
-    # 3. 验证 chunk
+    # 3. 验证 chunk：至少 1 个 chunk，包含 2031-09-17
     chunks_r = await client.get(f"/api/v1/knowledge/chunks/{document_id}", headers=auth_headers)
     assert chunks_r.status_code == 200
     chunks = chunks_r.json()
-    assert len(chunks) > 0
-    assert "2031" in chunks[0]["content"]
+    assert len(chunks) >= 1, "Must have at least 1 chunk after processing"
+    assert any("2031-09-17" in c["content"] for c in chunks), \
+        "At least one chunk must contain '2031-09-17'"
 
-    # 4. 验证检索
-    search_r = await client.post("/api/v1/knowledge/search", json={"query": "2031"}, headers=auth_headers, timeout=30)
+    # 4. 验证检索：搜索结果必须包含该 document_id + 正确 content
+    search_r = await client.post(
+        "/api/v1/knowledge/search",
+        json={"query": "2031-09-17"},
+        headers=auth_headers, timeout=30
+    )
     assert search_r.status_code == 200
     search_data = search_r.json()
-    assert search_data["total"] > 0
-    assert any(item["document_id"] == document_id for item in search_data["items"])
-    assert any("2031" in item["content"] for item in search_data["items"])
+    assert search_data["total"] >= 1, "Knowledge search must return at least 1 result"
 
-    # 5. AI 问答（API 可能因余额不足失败，验证流程完整性）
-    chat_r = await client.post("/api/v1/ai/chat",
+    matched = [item for item in search_data["items"] if item["document_id"] == document_id]
+    assert len(matched) >= 1, \
+        f"Search results must include uploaded document_id={document_id}"
+    assert any("2031" in item["content"] for item in matched), \
+        "Matched chunk must contain '2031'"
+
+    # 5. AI 问答：answer 必须包含 2031-09-17，sources 必须包含该 document_id
+    chat_r = await client.post(
+        "/api/v1/ai/chat",
         json={"message": "What is the Project Aurora launch date?", "memory_enabled": False},
         headers=auth_headers, timeout=60
     )
-    if chat_r.status_code == 200:
-        chat_data = chat_r.json()
-        assert "answer" in chat_data
-        assert "conversation_id" in chat_data
+    assert chat_r.status_code == 200, f"Chat failed: {chat_r.text[:300]}"
+    chat_data = chat_r.json()
+
+    # 5a. answer 必须包含 2031-09-17
+    answer = chat_data["answer"]
+    assert "2031" in answer, \
+        f"Answer must contain '2031', got: {answer[:200]}"
+
+    # 5b. sources 非空
+    sources = chat_data["sources"]
+    assert len(sources) >= 1, "Chat response must have at least 1 source/citation"
+
+    # 5c. 至少一条 source 指向 uploaded document_id
+    cited_doc_ids = [s["document_id"] for s in sources]
+    assert document_id in cited_doc_ids, \
+        f"At least one source must cite document_id={document_id}, got: {cited_doc_ids}"
+
+    # 5d. cited source 的 content 必须包含 2031
+    cited = [s for s in sources if s["document_id"] == document_id]
+    assert any("2031" in s["content"] for s in cited), \
+        "Cited source content must contain '2031'"
 
 
 @pytest.mark.asyncio
