@@ -123,12 +123,23 @@ async def _do_upload(file, category, source, current_user_id, db):
     db.add(document)
     await db.flush()
     await db.refresh(document)
-    
+
+    # 同步处理文档（确保处理完成）
+    try:
+        from app.services.document_processor import DocumentProcessor
+        processor = DocumentProcessor(db)
+        await processor.process_document(str(document.document_id))
+    except Exception as e:
+        # 处理失败，更新状态
+        document.status = DocumentStatus.FAILED.value
+        document.status_message = f"处理失败: {str(e)}"
+        await db.flush()
+
     return {
         "document_id": str(document.document_id),
         "file_name": original_name or "unknown",
-        "status": "UPLOADING",
-        "message": "文件上传成功，正在处理中"
+        "status": document.status,
+        "message": document.status_message or "处理完成"
     }
 
 

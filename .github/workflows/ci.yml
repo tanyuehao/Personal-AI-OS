@@ -9,7 +9,40 @@ on:
 jobs:
   test-backend:
     runs-on: ubuntu-latest
-    
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: personal_ai_os_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        command: redis-server --requirepass test_redis_password
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli -a test_redis_password ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:test_password@localhost:5432/personal_ai_os_test
+      REDIS_URL: redis://:test_redis_password@localhost:6379/0
+      SECRET_KEY: ci-test-secret-key-do-not-use-in-production
+      AI_PROVIDER: siliconflow
+      SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,7 +58,41 @@ jobs:
           python -m venv venv
           source venv/bin/activate
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx
+          pip install pytest pytest-asyncio httpx asyncpg
+
+      - name: Run Alembic migration
+        run: |
+          cd backend
+          source venv/bin/activate
+          alembic upgrade head
+
+      - name: Verify PostgreSQL connection
+        run: |
+          cd backend
+          source venv/bin/activate
+          python -c "
+          import asyncio
+          from sqlalchemy.ext.asyncio import create_async_engine
+          from sqlalchemy import text
+          
+          async def check():
+              engine = create_async_engine('postgresql+asyncpg://postgres:test_password@localhost:5432/personal_ai_os_test')
+              async with engine.connect() as conn:
+                  result = await conn.execute(text('SELECT version()'))
+                  version = result.scalar()
+                  print(f'PostgreSQL connected: {version}')
+                  
+                  # 验证 pgvector
+                  result = await conn.execute(text('SELECT extname FROM pg_extension WHERE extname = %s', ('vector',)))
+                  if result.scalar():
+                      print('pgvector extension: installed')
+                  else:
+                      print('pgvector extension: NOT INSTALLED')
+                      exit(1)
+              await engine.dispose()
+          
+          asyncio.run(check())
+          "
 
       - name: Run tests
         run: |
@@ -35,7 +102,7 @@ jobs:
 
   test-frontend:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,7 +127,7 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     needs: [test-backend, test-frontend]
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4

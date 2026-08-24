@@ -31,16 +31,14 @@ async def search_knowledge(
 
     基于用户的问题，从知识库中检索相关内容
     """
+    # 尝试向量搜索
     try:
-        # 获取 Embedding 服务
         from app.services.embedding import create_embedding
         from app.core.config import settings
         embedding_service = create_embedding(provider=settings.EMBEDDING_PROVIDER)
 
-        # 生成查询向量
         query_embedding = await embedding_service.embed_query(request.query)
 
-        # 向量语义搜索
         from app.services.vector_store import VectorStore
         vector_store = VectorStore(db)
 
@@ -51,7 +49,6 @@ async def search_knowledge(
             threshold=0.3
         )
 
-        # 如果向量搜索有结果，返回
         if results:
             items = []
             for chunk, score in results:
@@ -67,41 +64,37 @@ async def search_knowledge(
                 total=len(items),
                 query=request.query
             )
+    except Exception:
+        pass
 
-        # 降级为文本搜索（转义 ILIKE 通配符）
-        safe_query = request.query.replace("%", "\\%").replace("_", "\\_")
-        query = select(KnowledgeChunk).join(Document).where(
-            Document.user_id == current_user_id,
-            KnowledgeChunk.content.ilike(f"%{safe_query}%", escape="\\")
-        )
+    # 向量搜索无结果或失败，降级为文本搜索
+    safe_query = request.query.replace("%", "\\%").replace("_", "\\_")
+    query = select(KnowledgeChunk).join(Document).where(
+        Document.user_id == current_user_id,
+        KnowledgeChunk.content.ilike(f"%{safe_query}%", escape="\\")
+    )
 
-        if request.limit:
-            query = query.limit(request.limit)
+    if request.limit:
+        query = query.limit(request.limit)
 
-        result = await db.execute(query)
-        chunks = result.scalars().all()
+    result = await db.execute(query)
+    chunks = result.scalars().all()
 
-        items = []
-        for chunk in chunks:
-            items.append(KnowledgeChunkResponse(
-                chunk_id=str(chunk.chunk_id),
-                content=chunk.content,
-                document_id=str(chunk.document_id),
-                chunk_index=chunk.chunk_index,
-                relevance_score=0.5
-            ))
+    items = []
+    for chunk in chunks:
+        items.append(KnowledgeChunkResponse(
+            chunk_id=str(chunk.chunk_id),
+            content=chunk.content,
+            document_id=str(chunk.document_id),
+            chunk_index=chunk.chunk_index,
+            relevance_score=0.5
+        ))
 
-        return KnowledgeSearchResponse(
-            items=items,
-            total=len(items),
-            query=request.query
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="知识库搜索失败"
-        )
+    return KnowledgeSearchResponse(
+        items=items,
+        total=len(items),
+        query=request.query
+    )
 
 
 @router.get("/chunks/{document_id}")

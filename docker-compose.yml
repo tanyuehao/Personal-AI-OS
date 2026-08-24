@@ -3,12 +3,9 @@ version: '3.8'
 services:
   # 前端服务
   frontend:
-    # 本地构建（开发模式）
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    # 或使用 Docker Hub 镜像（生产模式，取消注释下面这行）
-    # image: ${DOCKERHUB_USERNAME:-tanyuehao}/personal-ai-os-frontend:${VERSION:-latest}
     ports:
       - "3000:3000"
     depends_on:
@@ -21,21 +18,18 @@ services:
 
   # 后端 API 服务
   backend:
-    # 本地构建（开发模式）
     build:
       context: ./backend
       dockerfile: Dockerfile
-    # 或使用 Docker Hub 镜像（生产模式，取消注释下面这行）
-    # image: ${DOCKERHUB_USERNAME:-tanyuehao}/personal-ai-os-backend:${VERSION:-latest}
     ports:
       - "8000:8000"
     depends_on:
       - database
       - redis
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@database:5432/personal_ai_os
-      - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@database:5432/personal_ai_os
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - SECRET_KEY=${SECRET_KEY}
       - AI_PROVIDER=${AI_PROVIDER:-siliconflow}
       - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
@@ -47,32 +41,44 @@ services:
     networks:
       - personal-ai-os
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # PostgreSQL 数据库
   database:
     image: pgvector/pgvector:pg16
-    ports:
-      - "5432:5432"
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=personal_ai_os
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - personal-ai-os
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # Redis 缓存
+  # Redis 缓存（仅 internal network，不暴露端口）
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:
       - personal-ai-os
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

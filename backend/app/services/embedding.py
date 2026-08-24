@@ -38,35 +38,52 @@ class OpenAIEmbedding(BaseEmbedding):
             dimension: 向量维度
         """
         from app.core.config import settings
-        
-        self.api_key = api_key or settings.OPENAI_API_KEY
+
+        self.api_key = api_key or settings.SILICONFLOW_API_KEY or settings.OPENAI_API_KEY
         self.model = model or settings.EMBEDDING_MODEL
         self.dimension = dimension or settings.EMBEDDING_DIMENSION
-        
+
         if not self.api_key:
-            raise ValueError("OPENAI_API_KEY 未配置")
+            raise ValueError("未配置 API Key（需要 SILICONFLOW_API_KEY 或 OPENAI_API_KEY）")
     
     async def embed(self, texts: List[str]) -> List[List[float]]:
         """
         生成文本的 embedding 向量
-        
+
         Args:
             texts: 文本列表
-        
+
         Returns:
             向量列表
         """
-        from openai import AsyncOpenAI
-        
-        client = AsyncOpenAI(api_key=self.api_key)
-        
-        response = await client.embeddings.create(
-            model=self.model,
-            input=texts,
-            dimensions=self.dimension
-        )
-        
-        return [item.embedding for item in response.data]
+        import httpx
+        from app.core.config import settings
+
+        # 使用 SiliconFlow API（OpenAI 兼容）
+        base_url = settings.SILICONFLOW_API_BASE or "https://api.siliconflow.cn/v1"
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{base_url}/embeddings",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "input": texts
+                }
+            )
+
+            data = response.json()
+
+            if "error" in data:
+                raise Exception(f"Embedding API 错误: {data['error'].get('message', '未知错误')}")
+
+            if "data" not in data or not data["data"]:
+                raise Exception(f"Embedding API 返回空数据: {data}")
+
+            return [item["embedding"] for item in data["data"]]
     
     async def embed_query(self, query: str) -> List[float]:
         """
@@ -132,15 +149,19 @@ def create_embedding(
 ) -> BaseEmbedding:
     """
     创建 Embedding 服务
-    
+
     Args:
-        provider: 提供商（openai 或 local）
+        provider: 提供商（openai, siliconflow, local）
         **kwargs: 额外参数
-    
+
     Returns:
         Embedding 服务实例
     """
-    if provider == "openai":
+    if provider in ("openai", "siliconflow"):
+        # SiliconFlow 使用 OpenAI 兼容接口
+        from app.core.config import settings
+        kwargs.setdefault("model", settings.EMBEDDING_MODEL)
+        kwargs.setdefault("dimension", settings.EMBEDDING_DIMENSION)
         return OpenAIEmbedding(**kwargs)
     elif provider == "local":
         return LocalEmbedding(**kwargs)

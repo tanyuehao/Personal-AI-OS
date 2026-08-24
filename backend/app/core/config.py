@@ -55,7 +55,7 @@ class Settings(BaseSettings):
 
     # ---------- Embedding 模型配置 ----------
     EMBEDDING_PROVIDER: str = "siliconflow"  # siliconflow, openai, local
-    EMBEDDING_MODEL: str = "BAAI/bge-m3"
+    EMBEDDING_MODEL: str = "BAAI/bge-large-zh-v1.5"
     EMBEDDING_DIMENSION: int = 1024
 
     # ---------- Reranker 模型配置 ----------

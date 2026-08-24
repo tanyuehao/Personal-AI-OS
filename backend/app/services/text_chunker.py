@@ -91,25 +91,40 @@ class TextChunker:
     def chunk_text(self, text: str) -> List[TextChunk]:
         """
         将文本切片
-        
+
         Args:
             text: 输入文本
-        
+
         Returns:
             切片列表
         """
         if not text or not text.strip():
             return []
-        
+
+        # 短文本直接作为单个切片
+        if len(text.strip()) < self.min_chunk_size:
+            return [TextChunk(
+                content=text.strip(),
+                chunk_index=0,
+                metadata={
+                    "chunk_size": len(text.strip()),
+                    "total_chunks": 1
+                }
+            )]
+
         # 按句子分割
         sentences = self._split_by_sentences(text)
-        
+
         if not sentences:
-            return []
-        
+            return [TextChunk(
+                content=text.strip(),
+                chunk_index=0,
+                metadata={"chunk_size": len(text.strip()), "total_chunks": 1}
+            )]
+
         # 合并小切片
         chunks_text = self._merge_small_chunks(sentences)
-        
+
         # 转换为 TextChunk 对象
         chunks = []
         for i, chunk_text in enumerate(chunks_text):
@@ -121,7 +136,7 @@ class TextChunker:
                     "total_chunks": len(chunks_text)
                 }
             ))
-        
+
         return chunks
     
     def chunk_by_fixed_size(self, text: str) -> List[TextChunk]:

@@ -136,8 +136,8 @@ class RAGService:
         """
         搜索相关知识（向量语义搜索，降级为文本搜索）
         """
+        # 尝试向量搜索
         try:
-            # 尝试向量搜索
             from app.services.embedding import create_embedding
             from app.core.config import settings
             from app.services.vector_store import VectorStore
@@ -156,7 +156,6 @@ class RAGService:
             if results:
                 sources = []
                 for chunk, score in results:
-                    # 使用预加载的 document 关系
                     document = chunk.document if hasattr(chunk, 'document') and chunk.document else None
                     sources.append({
                         "chunk_id": str(chunk.chunk_id),
@@ -166,11 +165,10 @@ class RAGService:
                         "relevance_score": round(score, 4)
                     })
                 return sources
-
         except Exception:
             pass
 
-        # 降级为文本搜索（转义 ILIKE 通配符，使用 selectinload 避免 N+1）
+        # 向量搜索无结果或失败，降级为文本搜索
         safe_query = query.replace("%", "\\%").replace("_", "\\_")
         result = await self.db.execute(
             select(KnowledgeChunk)
