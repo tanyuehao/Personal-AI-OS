@@ -136,17 +136,18 @@ async def test_decision_isolation(client, user_a, user_b):
 async def test_conversation_isolation(client, user_a, user_b):
     """User B 无法访问 User A 的对话"""
     r = await client.post("/api/v1/ai/chat", json={"message": "A's private chat", "memory_enabled": False}, headers=user_a, timeout=60)
-    if r.status_code == 200:
-        conv_id = r.json().get("conversation_id")
-        if conv_id:
-            # User B 尝试获取对话消息
-            r = await client.get(f"/api/v1/ai/conversations/{conv_id}", headers=user_b)
-            assert r.status_code == 200
-            assert len(r.json()) == 0, "User B should not see User A's messages"
+    assert r.status_code == 200, f"Chat should succeed for user A, got {r.status_code}"
+    conv_id = r.json().get("conversation_id")
+    assert conv_id, "Chat must return conversation_id"
 
-            # User B 尝试删除对话
-            r = await client.delete(f"/api/v1/ai/conversations/{conv_id}", headers=user_b)
-            assert r.status_code == 404
+    # User B 尝试获取对话消息
+    r = await client.get(f"/api/v1/ai/conversations/{conv_id}", headers=user_b)
+    assert r.status_code == 200
+    assert len(r.json()) == 0, "User B should not see User A's messages"
+
+    # User B 尝试删除对话
+    r = await client.delete(f"/api/v1/ai/conversations/{conv_id}", headers=user_b)
+    assert r.status_code == 404
 
 
 # ========== Export Isolation ==========

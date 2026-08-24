@@ -146,8 +146,8 @@ async def test_aurora_rag_strict(client, auth_headers):
 
     # 5a. answer 必须包含 2031-09-17
     answer = chat_data["answer"]
-    assert "2031" in answer, \
-        f"Answer must contain '2031', got: {answer[:200]}"
+    assert "2031-09-17" in answer, \
+        f"Answer must contain '2031-09-17', got: {answer[:200]}"
 
     # 5b. sources 非空
     sources = chat_data["sources"]

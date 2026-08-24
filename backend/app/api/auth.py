@@ -14,6 +14,7 @@ from app.core.security import (
     create_access_token, create_refresh_token,
     decode_token, get_current_user_id
 )
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User, RefreshToken
 from app.schemas.user import (
@@ -34,7 +35,7 @@ async def _create_refresh_token_record(db: AsyncSession, user_id: str, jti: str,
         user_id=user_id,
         jti=jti,
         token_family=token_family,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=7)
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     )
     db.add(token_record)
     await db.flush()
@@ -97,7 +98,7 @@ async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
         user_id=str(user.user_id),
         jti=jti,
         token_family=token_family,
-        expires_at=datetime.utcnow() + timedelta(days=7)
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     )
     db.add(token_record)
     await db.flush()
@@ -170,9 +171,13 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
             await db.commit()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌已被使用，所有会话已失效")
 
-        # 检查是否已过期
-        if token_record.expires_at and token_record.expires_at.replace(tzinfo=None) < datetime.utcnow():
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌已过期")
+        # 检查是否已过期（SQLite 返回 naive datetime，PostgreSQL 返回 aware，统一处理）
+        expires_at = token_record.expires_at
+        if expires_at:
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at < datetime.now(timezone.utc):
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌已过期")
 
         # 标记旧 token 为已使用
         token_record.is_used = True

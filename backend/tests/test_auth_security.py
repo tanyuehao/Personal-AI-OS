@@ -313,3 +313,27 @@ async def test_access_token_as_refresh_rejected(client):
 
     r = await client.post("/api/v1/auth/refresh", json={"refresh_token": access})
     assert r.status_code == 401, "access token must not work as refresh token"
+
+
+@pytest.mark.asyncio
+async def test_expired_refresh_token_rejected(client):
+    """过期的 refresh token 必须 401"""
+    from datetime import datetime, timedelta, timezone
+
+    tokens = await _register_and_login(client, "expired1", "expired1@test.com")
+    rt = tokens["refresh_token"]
+    payload = decode_token(rt)
+
+    # 手动将 DB 中的 expires_at 设为过去时间
+    async with async_session_factory() as s:
+        result = await s.execute(
+            select(RefreshToken).where(RefreshToken.jti == payload["jti"])
+        )
+        db_token = result.scalar_one_or_none()
+        assert db_token is not None
+        db_token.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        await s.commit()
+
+    # 使用过期 token → 必须 401
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": rt})
+    assert r.status_code == 401, "Expired refresh token must be rejected"

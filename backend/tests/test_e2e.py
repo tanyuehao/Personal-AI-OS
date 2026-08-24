@@ -96,10 +96,9 @@ async def test_e2e_document_to_qa(client, auth_headers):
     chat = await client.post("/api/v1/ai/chat", json={"message": "What is the launch date?", "memory_enabled": False}, headers=auth_headers, timeout=60)
     assert chat.status_code == 200
     chat_data = chat.json()
-    # 验证：有回答、有对话ID、有来源（即使 AI 未使用，流程也应完整）
     assert "answer" in chat_data
     assert "conversation_id" in chat_data
-    assert len(chat_data.get("sources", [])) >= 0
+    assert chat_data["answer"], "answer must not be empty"
 
 
 @pytest.mark.asyncio
