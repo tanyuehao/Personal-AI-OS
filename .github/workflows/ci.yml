@@ -83,7 +83,7 @@ jobs:
                   print(f'PostgreSQL connected: {version}')
                   
                   # 验证 pgvector
-                  result = await conn.execute(text('SELECT extname FROM pg_extension WHERE extname = %s', ('vector',)))
+                  result = await conn.execute(text('SELECT extname FROM pg_extension WHERE extname = :extname'), {'extname': 'vector'})
                   if result.scalar():
                       print('pgvector extension: installed')
                   else:
