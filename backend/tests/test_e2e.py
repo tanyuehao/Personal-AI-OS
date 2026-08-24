@@ -105,20 +105,44 @@ async def test_e2e_document_to_qa(client, auth_headers):
 @pytest.mark.asyncio
 async def test_e2e_memory_candidate_flow(client, auth_headers):
     """
-    E2E-02: 用户表达偏好 -> 生成候选记忆 -> 用户确认 -> 新会话可召回
+    E2E-02: 用户表达偏好 -> 生成候选记忆 -> 用户确认 -> 新会话召回并回答包含 Python
+
+    这是 Memory baseline test：创建并确认偏好后，提问必须得到包含正确答案的回复。
     """
-    # 创建记忆
-    mem = await client.post("/api/v1/memory", json={"content": "I prefer Python", "memory_type": "PREFERENCE"}, headers=auth_headers)
+    # 1. 创建记忆
+    mem = await client.post(
+        "/api/v1/memory",
+        json={"content": "I prefer Python", "memory_type": "PREFERENCE", "importance": 0.9},
+        headers=auth_headers
+    )
     assert mem.status_code == 201
     mem_id = mem.json()["memory_id"]
 
-    # 确认
+    # 2. 确认记忆（PENDING → CONFIRMED）
     confirm = await client.post(f"/api/v1/memory/{mem_id}/confirm", headers=auth_headers)
     assert confirm.status_code == 200
+    assert confirm.json()["is_confirmed"] == "CONFIRMED"
 
-    # 新会话提问
-    chat = await client.post("/api/v1/ai/chat", json={"message": "What language do I prefer?", "memory_enabled": True}, headers=auth_headers, timeout=60)
-    assert chat.status_code == 200
+    # 3. 验证记忆列表中存在
+    mem_list = await client.get("/api/v1/memory", headers=auth_headers)
+    assert mem_list.status_code == 200
+    items = mem_list.json()["items"]
+    confirmed = [m for m in items if m.get("is_confirmed") == "CONFIRMED"]
+    assert any("Python" in m["content"] for m in confirmed), \
+        "Confirmed memory containing 'Python' must appear in list"
+
+    # 4. 新会话提问 — 回答必须包含 Python
+    chat = await client.post(
+        "/api/v1/ai/chat",
+        json={"message": "What programming language do I prefer?", "memory_enabled": True},
+        headers=auth_headers, timeout=60
+    )
+    assert chat.status_code == 200, f"Chat failed: {chat.text[:300]}"
+    chat_data = chat.json()
+
+    answer = chat_data["answer"]
+    assert "Python" in answer, \
+        f"Answer must contain 'Python', got: {answer[:300]}"
 
 
 @pytest.mark.asyncio
