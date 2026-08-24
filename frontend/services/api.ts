@@ -4,7 +4,8 @@
  */
 import axios from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// 空值或未设置时使用相对路径（同域，通过 Next.js rewrite 代理到后端）
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 // 创建 axios 实例
 const api = axios.create({

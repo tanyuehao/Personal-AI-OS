@@ -11,7 +11,8 @@ services:
     depends_on:
       - backend
     environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NEXT_PUBLIC_API_URL=
+      - API_BACKEND_URL=http://backend:8000
     networks:
       - personal-ai-os
     restart: unless-stopped
@@ -35,7 +36,7 @@ services:
       - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - LLM_MODEL=${LLM_MODEL:-deepseek-ai/DeepSeek-V3}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-m3}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-large-zh-v1.5}
       - EMBEDDING_DIMENSION=1024
     volumes:
       - uploads:/app/uploads
