@@ -29,11 +29,7 @@ class RefreshTokenRequest(BaseModel):
 
 
 async def _create_refresh_token_record(db: AsyncSession, user_id: str, jti: str, token_family: str):
-    """创建 refresh token 记录"""
-    # 确保 jti 唯一
-    if not jti:
-        jti = str(uuid.uuid4())
-
+    """创建 refresh token 记录 — jti 必须与 JWT payload 中的 jti 完全一致"""
     token_record = RefreshToken(
         user_id=user_id,
         jti=jti,

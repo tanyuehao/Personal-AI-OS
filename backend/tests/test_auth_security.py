@@ -5,6 +5,10 @@ Personal AI OS - Auth Security Tests
 import pytest
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+from app.core.security import decode_token
+from app.core.database import async_session_factory
+from sqlalchemy import select
+from app.models.user import RefreshToken
 
 
 @pytest.fixture
@@ -12,6 +16,74 @@ async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.mark.asyncio
+async def test_jwt_jti_matches_db_jti(client):
+    """P0: JWT.jti 必须与 DB.refresh_tokens.jti 完全一致"""
+    await client.post("/api/v1/auth/register", json={
+        "username": "jti_match_test", "email": "jti_match@test.com", "password": "test123"
+    })
+
+    # 登录
+    r = await client.post("/api/v1/auth/login", json={"email": "jti_match@test.com", "password": "test123"})
+    assert r.status_code == 200
+    refresh_token = r.json()["refresh_token"]
+
+    # 从 JWT 中解码 jti
+    jwt_payload = decode_token(refresh_token)
+    jwt_jti = jwt_payload.get("jti")
+    jwt_type = jwt_payload.get("type")
+    jwt_sub = jwt_payload.get("sub")
+
+    assert jwt_jti is not None, "JWT payload must contain jti"
+    assert jwt_type == "refresh", "Token type must be refresh"
+    assert jwt_sub is not None, "JWT payload must contain sub (user_id)"
+
+    # 从 DB 中查询同一个 jti
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(RefreshToken).where(RefreshToken.jti == jwt_jti)
+        )
+        db_record = result.scalar_one_or_none()
+
+    assert db_record is not None, f"DB must contain RefreshToken with jti={jwt_jti}"
+    assert str(db_record.user_id) == jwt_sub, f"DB user_id {db_record.user_id} must match JWT sub {jwt_sub}"
+    assert db_record.jti == jwt_jti, f"DB jti {db_record.jti} must match JWT jti {jwt_jti}"
+    assert db_record.is_used is False, "Token must not be used yet"
+    assert db_record.is_revoked is False, "Token must not be revoked yet"
+
+
+@pytest.mark.asyncio
+async def test_refresh_creates_new_matching_jti(client):
+    """Refresh 后新 token 的 JWT.jti 也必须匹配 DB"""
+    await client.post("/api/v1/auth/register", json={
+        "username": "jti_refresh_test", "email": "jti_refresh@test.com", "password": "test123"
+    })
+
+    # 登录
+    r = await client.post("/api/v1/auth/login", json={"email": "jti_refresh@test.com", "password": "test123"})
+    old_refresh = r.json()["refresh_token"]
+
+    # 第一次 refresh
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
+    assert r.status_code == 200
+    new_refresh = r.json()["refresh_token"]
+
+    # 验证新 token 的 JWT.jti === DB.jti
+    new_payload = decode_token(new_refresh)
+    new_jti = new_payload.get("jti")
+    assert new_jti is not None
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(RefreshToken).where(RefreshToken.jti == new_jti)
+        )
+        db_record = result.scalar_one_or_none()
+
+    assert db_record is not None, f"DB must contain new RefreshToken with jti={new_jti}"
+    assert db_record.jti == new_jti, f"DB jti {db_record.jti} must match new JWT jti {new_jti}"
+    assert db_record.is_used is False, "New token must not be used yet"
 
 
 @pytest.mark.asyncio
