@@ -15,7 +15,7 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DATABASE_ECHO,
     pool_pre_ping=True,
-    **( {} if is_sqlite else {"pool_size": 20, "max_overflow": 10} )
+    **({} if is_sqlite else {"pool_size": 20, "max_overflow": 10})
 )
 
 # 创建异步会话工厂

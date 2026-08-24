@@ -2,7 +2,7 @@
 Personal AI OS - Models Package
 数据模型包
 """
-from app.models.user import User
+from app.models.user import User, RefreshToken
 from app.models.document import Document, DocumentStatus
 from app.models.memory import Memory, MemoryType
 from app.models.knowledge import KnowledgeChunk
@@ -14,6 +14,7 @@ from app.models.agent import AgentTask
 
 __all__ = [
     "User",
+    "RefreshToken",
     "Document",
     "DocumentStatus",
     "Memory",

@@ -166,6 +166,7 @@ class RAGService:
                     })
                 return sources
         except Exception:
+            # 向量搜索失败（如 API 余额不足），降级为文本搜索
             pass
 
         # 向量搜索无结果或失败，降级为文本搜索

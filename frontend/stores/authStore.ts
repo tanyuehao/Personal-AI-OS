@@ -62,7 +62,13 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
   
-  logout: () => {
+  logout: async () => {
+    const refreshToken = localStorage.getItem('refresh_token');
+    try {
+      await authApi.logout(refreshToken || undefined);
+    } catch (e) {
+      // 忽略登出错误
+    }
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     set({

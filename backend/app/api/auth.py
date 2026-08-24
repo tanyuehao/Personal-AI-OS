@@ -93,10 +93,15 @@ async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
     refresh_token = create_refresh_token(data={"sub": str(user.user_id)})
     token_payload = decode_token(refresh_token)
 
+    # 使用 JWT 中的 jti 作为 RefreshToken 的 jti（确保一致）
+    jti = token_payload.get("jti", "")
     token_family = str(uuid.uuid4())
     await _create_refresh_token_record(
-        db, str(user.user_id), token_payload.get("jti", ""), token_family
+        db, str(user.user_id), jti, token_family
     )
+
+    # 显式提交确保 token 在后续请求中可见
+    await db.commit()
 
     return TokenResponse(
         access_token=access_token,
@@ -109,9 +114,6 @@ async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
 async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
     """
     刷新访问令牌（带 rotation）
-
-    使用 refresh token 获取新的 access token 和 refresh token。
-    旧 refresh token 会被标记为已使用。
     """
     refresh_token = request.refresh_token
 
@@ -127,7 +129,7 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
         user_id = payload.get("sub")
         jti = payload.get("jti", "")
 
-        # 查找 refresh token 记录
+        # 查询 refresh token 记录（使用 db session）
         result = await db.execute(
             select(RefreshToken).where(
                 RefreshToken.user_id == user_id,
@@ -139,11 +141,24 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
         if not token_record:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的刷新令牌")
 
-        # 检查是否已被使用（重放攻击）
+        # 检查是否已被撤销
+        if token_record.is_revoked:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌已被撤销")
+
+        # 检查是否已被使用（重放攻击）- revoke 整个 token family
         if token_record.is_used:
-            # 标记整个 token family 为 revoked
-            token_record.is_revoked = True
-            token_record.revoked_at = datetime.now(timezone.utc)
+            family_result = await db.execute(
+                select(RefreshToken).where(
+                    RefreshToken.user_id == user_id,
+                    RefreshToken.token_family == token_record.token_family,
+                    RefreshToken.is_used == False,
+                    RefreshToken.is_revoked == False
+                )
+            )
+            family_tokens = family_result.scalars().all()
+            for t in family_tokens:
+                t.is_revoked = True
+                t.revoked_at = datetime.now(timezone.utc)
             await db.flush()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌已被使用，所有会话已失效")
 

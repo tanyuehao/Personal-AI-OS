@@ -59,11 +59,12 @@ export const authApi = {
     api.post('/auth/login', data),
   
   refreshToken: (refreshToken: string) =>
-    api.post(`/auth/refresh?refresh_token=${encodeURIComponent(refreshToken)}`),
-  
+    api.post('/auth/refresh', { refresh_token: refreshToken }),
+
   getMe: () => api.get('/auth/me'),
-  
-  logout: () => api.post('/auth/logout'),
+
+  logout: (refreshToken?: string) =>
+    api.post('/auth/logout', { refresh_token: refreshToken || '' }),
 };
 
 // ========== User API ==========
