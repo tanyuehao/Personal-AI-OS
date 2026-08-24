@@ -121,7 +121,7 @@ async def get_available_models(api_key: str):
             )
             
             if response.status_code != 200:
-                raise HTTPException(status_code=400, detail=f"Failed: {response.text}")
+                raise HTTPException(status_code=400, detail="模型列表获取失败")
             
             data = response.json()
             models = data.get("data", [])
@@ -168,6 +168,6 @@ async def test_connection(current_user_id: str = Depends(get_current_user_id), d
             )
             if response.status_code == 200:
                 return {"success": True, "message": "Connection successful"}
-            return {"success": False, "message": f"Failed: {response.text}"}
-    except Exception as e:
-        return {"success": False, "message": f"Failed: {str(e)}"}
+            return {"success": False, "message": "连接失败，请检查 API Key"}
+    except Exception:
+        return {"success": False, "message": "连接失败，请检查网络和 API Key 配置"}

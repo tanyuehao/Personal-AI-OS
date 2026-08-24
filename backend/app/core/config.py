@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
 
-    # 数据库配置
-    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/personal_ai_os"
+    # 数据库配置（canonical async URL）
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/personal_ai_os"
     DATABASE_ECHO: bool = False
 
     # Redis 配置
@@ -85,13 +85,21 @@ class Settings(BaseSettings):
     def model_post_init(self, __context):
         """启动时检查关键配置"""
         if not self.SECRET_KEY:
-            self.SECRET_KEY = secrets.token_urlsafe(64)
             if self.DEBUG:
+                # 开发模式：自动生成随机密钥
+                self.SECRET_KEY = secrets.token_urlsafe(64)
                 import warnings
                 warnings.warn(
                     "SECRET_KEY 未设置，已自动生成随机密钥。"
                     "生产环境请在 .env 中设置固定的 SECRET_KEY。",
                     stacklevel=2,
+                )
+            else:
+                # 生产模式：必须设置 SECRET_KEY
+                raise ValueError(
+                    "SECRET_KEY 未设置！"
+                    "生产环境必须在 .env 文件中设置固定的 SECRET_KEY。"
+                    "请在 .env 文件中添加: SECRET_KEY=your-secret-key"
                 )
 
     class Config:
