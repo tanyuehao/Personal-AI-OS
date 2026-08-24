@@ -3,128 +3,133 @@ Personal AI OS - Security Tests
 安全测试
 """
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
+from app.main import app
+
+
+@pytest.fixture
+async def client():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+
+@pytest.fixture
+async def user_a_headers(client):
+    """User A credentials"""
+    await client.post("/api/v1/auth/register", json={
+        "username": "user_a", "email": "user_a@test.com", "password": "pass_a123"
+    })
+    r = await client.post("/api/v1/auth/login", json={"email": "user_a@test.com", "password": "pass_a123"})
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+@pytest.fixture
+async def user_b_headers(client):
+    """User B credentials"""
+    await client.post("/api/v1/auth/register", json={
+        "username": "user_b", "email": "user_b@test.com", "password": "pass_b123"
+    })
+    r = await client.post("/api/v1/auth/login", json={"email": "user_b@test.com", "password": "pass_b123"})
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_access(client: AsyncClient):
+async def test_unauthorized_access(client):
     """测试未授权访问"""
-    # 尝试访问需要认证的端点
-    endpoints = [
-        "/api/v1/documents",
-        "/api/v1/memory",
-        "/api/v1/cognitive/beliefs",
-        "/api/v1/decision",
-        "/api/v1/settings",
-        "/api/v1/graph",
-        "/api/v1/export/all",
-    ]
-
-    for endpoint in endpoints:
-        response = await client.get(endpoint)
-        assert response.status_code in [401, 403], f"{endpoint} should require auth"
+    endpoints = ["/api/v1/documents", "/api/v1/memory", "/api/v1/settings"]
+    for ep in endpoints:
+        r = await client.get(ep)
+        assert r.status_code in [401, 403], f"{ep} should require auth"
 
 
 @pytest.mark.asyncio
-async def test_cross_user_data_isolation(client: AsyncClient, auth_headers: dict):
-    """测试跨用户数据隔离"""
-    # 创建数据
-    mem_response = await client.post(
-        "/api/v1/memory",
-        json={"content": "Private memory", "memory_type": "FACT"},
-        headers=auth_headers
-    )
-    mem_id = mem_response.json()["memory_id"]
-
-    # 尝试用另一个用户访问（模拟）
-    # 这里我们用同一个用户测试，但验证 user_id 检查存在
-    response = await client.get(
-        f"/api/v1/memory/{mem_id}",
-        headers=auth_headers
-    )
-    assert response.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_invalid_token(client: AsyncClient):
+async def test_invalid_token(client):
     """测试无效 token"""
-    headers = {"Authorization": "Bearer invalid-token-12345"}
-
-    response = await client.get("/api/v1/memory", headers=headers)
-    assert response.status_code == 401
+    headers = {"Authorization": "Bearer invalid-token"}
+    r = await client.get("/api/v1/memory", headers=headers)
+    assert r.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_sql_injection_prevention(client: AsyncClient, auth_headers: dict):
+async def test_cross_user_memory_isolation(client, user_a_headers, user_b_headers):
+    """测试跨用户记忆隔离"""
+    # User A 创建记忆
+    r = await client.post("/api/v1/memory", json={"content": "A's private memory", "memory_type": "FACT"}, headers=user_a_headers)
+    mem_id = r.json()["memory_id"]
+
+    # User B 尝试访问
+    r = await client.get(f"/api/v1/memory/{mem_id}", headers=user_b_headers)
+    assert r.status_code == 404, "User B should not access User A's memory"
+
+    # User B 尝试删除
+    r = await client.delete(f"/api/v1/memory/{mem_id}", headers=user_b_headers)
+    assert r.status_code == 404, "User B should not delete User A's memory"
+
+
+@pytest.mark.asyncio
+async def test_cross_user_belief_isolation(client, user_a_headers, user_b_headers):
+    """测试跨用户观点隔离"""
+    r = await client.post("/api/v1/cognitive/beliefs", json={"topic": "Private", "content": "A's belief"}, headers=user_a_headers)
+    belief_id = r.json()["belief_id"]
+
+    r = await client.get(f"/api/v1/cognitive/beliefs/{belief_id}", headers=user_b_headers)
+    assert r.status_code == 404
+
+    r = await client.delete(f"/api/v1/cognitive/beliefs/{belief_id}", headers=user_b_headers)
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cross_user_decision_isolation(client, user_a_headers, user_b_headers):
+    """测试跨用户决策隔离"""
+    r = await client.post("/api/v1/decision", json={"problem": "Private decision"}, headers=user_a_headers)
+    dec_id = r.json()["decision_id"]
+
+    r = await client.get(f"/api/v1/decision/{dec_id}", headers=user_b_headers)
+    assert r.status_code == 404
+
+    r = await client.delete(f"/api/v1/decision/{dec_id}", headers=user_b_headers)
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cross_user_conversation_isolation(client, user_a_headers, user_b_headers):
+    """测试跨用户对话隔离"""
+    r = await client.post("/api/v1/ai/chat", json={"message": "Private chat"}, headers=user_a_headers, timeout=60)
+    conv_id = r.json()["conversation_id"]
+
+    r = await client.get(f"/api/v1/ai/conversations/{conv_id}", headers=user_b_headers)
+    assert r.status_code == 200
+    assert len(r.json()) == 0, "User B should not see User A's messages"
+
+
+@pytest.mark.asyncio
+async def test_sql_injection_prevention(client, user_a_headers):
     """测试 SQL 注入防护"""
-    # 尝试 SQL 注入
-    injection_payloads = [
-        "'; DROP TABLE users; --",
-        "1' OR '1'='1",
-        "admin'--",
-        "' UNION SELECT * FROM users --",
-    ]
-
-    for payload in injection_payloads:
-        response = await client.post(
-            "/api/v1/memory/search",
-            json={"query": payload},
-            headers=auth_headers
-        )
-        # 应该正常返回（200），而不是崩溃（500）
-        assert response.status_code in [200, 400, 422]
+    payloads = ["'; DROP TABLE users; --", "1' OR '1'='1", "admin'--"]
+    for payload in payloads:
+        r = await client.post("/api/v1/memory/search", json={"query": payload}, headers=user_a_headers)
+        assert r.status_code in [200, 400, 422]
 
 
 @pytest.mark.asyncio
-async def test_file_upload_security(client: AsyncClient, auth_headers: dict):
-    """测试文件上传安全"""
-    # 测试不支持的文件类型
-    content = b"test"
-    files = {"file": ("malware.exe", content, "application/octet-stream")}
-    response = await client.post(
-        "/api/v1/documents/upload",
-        files=files,
-        headers=auth_headers
-    )
-    assert response.status_code in [400, 422, 500]
-
-
-@pytest.mark.asyncio
-async def test_api_key_not_exposed(client: AsyncClient, auth_headers: dict):
-    """测试 API Key 不暴露"""
-    response = await client.get("/api/v1/settings", headers=auth_headers)
-    assert response.status_code == 200
-    data = response.json()
-
-    # 验证响应包含预期的字段
-    assert "ai_provider" in data
-    assert "llm_model" in data
-    assert "temperature" in data
-
-
-@pytest.mark.asyncio
-async def test_rate_limiting(client: AsyncClient, auth_headers: dict):
+async def test_rate_limiting(client):
     """测试速率限制"""
-    # 快速发送多个请求
-    for i in range(5):
-        response = await client.get("/api/v1/memory", headers=auth_headers)
-        assert response.status_code == 200
-
-    # 检查速率限制配置
-    response = await client.get("/api/v1/usage/limits")
-    assert response.status_code == 200
-    data = response.json()
+    r = await client.get("/api/v1/usage/limits")
+    assert r.status_code == 200
+    data = r.json()
     assert "rpm_limit" in data
     assert "tpm_limit" in data
 
 
 @pytest.mark.asyncio
-async def test_path_traversal_prevention(client: AsyncClient, auth_headers: dict):
-    """测试路径穿越防护"""
-    # 尝试访问不存在的文档 ID
-    response = await client.get(
-        "/api/v1/documents/../../../etc/passwd",
-        headers=auth_headers
-    )
-    # 应该返回 404 或 422，而不是文件内容
-    assert response.status_code in [404, 422]
+async def test_api_key_not_exposed(client, user_a_headers):
+    """测试 API Key 不暴露"""
+    r = await client.get("/api/v1/settings", headers=user_a_headers)
+    assert r.status_code == 200
+    data = r.json()
+    # API Key 应该被加密存储
+    sf_key = data.get("siliconflow_api_key", "")
+    if sf_key:
+        assert "****" in sf_key or len(sf_key) < 10

@@ -235,7 +235,14 @@ async def delete_document(
     # 删除文件
     if os.path.exists(document.file_path):
         os.remove(document.file_path)
-    
+
+    # 先删除关联的知识切片
+    from app.models.knowledge import KnowledgeChunk
+    from sqlalchemy import delete as sql_delete
+    await db.execute(
+        sql_delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document_id)
+    )
+
     # 删除数据库记录
     await db.delete(document)
     
