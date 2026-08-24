@@ -17,14 +17,14 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 async def setup_db():
     """初始化测试数据库"""
     await init_db()
 
 
 @pytest.fixture
-async def client(setup_db):
+async def client():
     """创建测试客户端"""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

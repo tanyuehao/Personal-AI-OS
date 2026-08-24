@@ -96,11 +96,17 @@ async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
     # 使用 JWT 中的 jti 作为 RefreshToken 的 jti（确保一致）
     jti = token_payload.get("jti", "")
     token_family = str(uuid.uuid4())
-    await _create_refresh_token_record(
-        db, str(user.user_id), jti, token_family
-    )
 
-    # 显式提交确保 token 在后续请求中可见
+    token_record = RefreshToken(
+        user_id=str(user.user_id),
+        jti=jti,
+        token_family=token_family,
+        expires_at=datetime.utcnow() + timedelta(days=7)
+    )
+    db.add(token_record)
+    await db.flush()
+
+    # 显式提交确保数据在响应前持久化（SQLite + ASGITransport 兼容）
     await db.commit()
 
     return TokenResponse(
@@ -129,7 +135,7 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
         user_id = payload.get("sub")
         jti = payload.get("jti", "")
 
-        # 查询 refresh token 记录（使用 db session）
+        # 查询 refresh token 记录
         result = await db.execute(
             select(RefreshToken).where(
                 RefreshToken.user_id == user_id,
@@ -159,11 +165,12 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
             for t in family_tokens:
                 t.is_revoked = True
                 t.revoked_at = datetime.now(timezone.utc)
-            await db.flush()
+            # 显式 commit 确保 revoke 在异常前持久化
+            await db.commit()
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌已被使用，所有会话已失效")
 
         # 检查是否已过期
-        if token_record.expires_at < datetime.now(timezone.utc):
+        if token_record.expires_at and token_record.expires_at.replace(tzinfo=None) < datetime.utcnow():
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌已过期")
 
         # 标记旧 token 为已使用
@@ -196,7 +203,9 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
 
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.error(f"Refresh token error: {type(e).__name__}: {e}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌无效")
 
 

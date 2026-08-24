@@ -36,7 +36,7 @@ class UserPattern(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
-        Index("ix_pattern_user_type", "user_id", "pattern_type"),
+        Index("ix_prediction_pattern_user_type", "user_id", "pattern_type"),
     )
 
     def __repr__(self):

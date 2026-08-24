@@ -87,14 +87,19 @@ async def test_logout_invalidates_refresh_token(client):
     await client.post("/api/v1/auth/register", json={
         "username": "logout_test", "email": "logout@test.com", "password": "test123"
     })
-    
+
     r = await client.post("/api/v1/auth/login", json={"email": "logout@test.com", "password": "test123"})
+    access_token = r.json()["access_token"]
     refresh_token = r.json()["refresh_token"]
-    
-    # 登出
-    r = await client.post("/api/v1/auth/logout", json={"refresh_token": refresh_token})
+    auth_headers = {"Authorization": f"Bearer {access_token}"}
+
+    # 登出（带 auth header + refresh token in query）
+    r = await client.post(
+        f"/api/v1/auth/logout?refresh_token={refresh_token}",
+        headers=auth_headers
+    )
     assert r.status_code == 200
-    
+
     # 使用旧 refresh token - 必须 401
     r = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert r.status_code == 401, "Refresh token should be invalidated after logout"
