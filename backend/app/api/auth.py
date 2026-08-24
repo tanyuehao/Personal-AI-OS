@@ -205,15 +205,20 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新令牌无效")
 
 
+class LogoutRequest(BaseModel):
+    refresh_token: str = ""
+
+
 @router.post("/logout", response_model=MessageResponse)
 async def logout(
-    refresh_token: str = "",
+    request: LogoutRequest,
     current_user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    用户登出 - 撤销 refresh token
+    用户登出 - 撤销 refresh token（JSON body）
     """
+    refresh_token = request.refresh_token
     if refresh_token:
         try:
             payload = decode_token(refresh_token)

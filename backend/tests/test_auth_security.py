@@ -165,9 +165,10 @@ async def test_logout_invalidates_refresh_token(client):
     refresh_token = r.json()["refresh_token"]
     auth_headers = {"Authorization": f"Bearer {access_token}"}
 
-    # 登出（带 auth header + refresh token in query）
+    # 登出（JSON body）
     r = await client.post(
-        f"/api/v1/auth/logout?refresh_token={refresh_token}",
+        "/api/v1/auth/logout",
+        json={"refresh_token": refresh_token},
         headers=auth_headers
     )
     assert r.status_code == 200
