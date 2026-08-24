@@ -149,6 +149,11 @@ async def refresh_token(request: RefreshTokenRequest, db: AsyncSession = Depends
 
         # 检查是否已被使用（重放攻击）- revoke 整个 token family
         if token_record.is_used:
+            # 先 revoke 自身（replayed token）
+            token_record.is_revoked = True
+            token_record.revoked_at = datetime.now(timezone.utc)
+
+            # revoke family 中所有未使用、未撤销的 token
             family_result = await db.execute(
                 select(RefreshToken).where(
                     RefreshToken.user_id == user_id,

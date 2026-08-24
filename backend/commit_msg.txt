@@ -1,0 +1,8 @@
+fix: P0 - logout backend changed to JSON body, matching frontend
+
+Backend /auth/logout changed from query parameter to JSON body:
+  POST /auth/logout
+  Body: {"refresh_token": "..."}
+
+Frontend was already sending JSON body, backend used query parameter causing protocol mismatch.
+Tests updated, 8 auth security tests all pass.

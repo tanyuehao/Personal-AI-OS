@@ -1,6 +1,15 @@
 """
-Personal AI OS - Auth Security Tests
-认证安全测试
+Personal AI OS - Auth Rotation Tests
+P0: 完整的 refresh token rotation 生命周期验证
+
+测试覆盖：
+1. T1→T2 rotation
+2. T1 replay → family revoke
+3. T2 也必须 401（family revoke 级联）
+4. logout → old token 401
+5. 多次 login 不冲突
+6. JWT.jti === DB.jti
+7. malformed / expired token
 """
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -18,177 +27,289 @@ async def client():
         yield ac
 
 
-@pytest.mark.asyncio
-async def test_jwt_jti_matches_db_jti(client):
-    """P0: JWT.jti 必须与 DB.refresh_tokens.jti 完全一致"""
+# ─── helper ───────────────────────────────────────────────
+
+async def _register_and_login(client, username, email, password="test123"):
+    """注册并登录，返回 {access_token, refresh_token}"""
     await client.post("/api/v1/auth/register", json={
-        "username": "jti_match_test", "email": "jti_match@test.com", "password": "test123"
+        "username": username, "email": email, "password": password
     })
+    r = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, f"login failed: {r.text}"
+    return r.json()
 
-    # 登录
-    r = await client.post("/api/v1/auth/login", json={"email": "jti_match@test.com", "password": "test123"})
+
+async def _db_token_count():
+    async with async_session_factory() as s:
+        r = await s.execute(select(RefreshToken))
+        return len(r.scalars().all())
+
+
+async def _db_tokens_for_user(user_id):
+    async with async_session_factory() as s:
+        r = await s.execute(select(RefreshToken).where(RefreshToken.user_id == user_id))
+        return r.scalars().all()
+
+
+# ─── 1. T1 → T2 rotation ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_rotation_t1_to_t2(client):
+    """登录获得 T1，refresh 获得 T2，T1 ≠ T2，T1 标记为 used"""
+    tokens = await _register_and_login(client, "rot1", "rot1@test.com")
+    t1 = tokens["refresh_token"]
+    t1_payload = decode_token(t1)
+
+    # T1 → T2
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t1})
     assert r.status_code == 200
-    refresh_token = r.json()["refresh_token"]
+    t2 = r.json()["refresh_token"]
+    t2_payload = decode_token(t2)
 
-    # 从 JWT 中解码 jti
-    jwt_payload = decode_token(refresh_token)
-    jwt_jti = jwt_payload.get("jti")
-    jwt_type = jwt_payload.get("type")
-    jwt_sub = jwt_payload.get("sub")
+    # T1 ≠ T2
+    assert t1 != t2, "T2 must differ from T1"
 
-    assert jwt_jti is not None, "JWT payload must contain jti"
-    assert jwt_type == "refresh", "Token type must be refresh"
-    assert jwt_sub is not None, "JWT payload must contain sub (user_id)"
+    # JWT.jti must differ
+    assert t1_payload["jti"] != t2_payload["jti"], "JWT jti must rotate"
 
-    # 从 DB 中查询同一个 jti
-    async with async_session_factory() as session:
-        result = await session.execute(
-            select(RefreshToken).where(RefreshToken.jti == jwt_jti)
+    # T1's DB record must be is_used=True
+    async with async_session_factory() as s:
+        r = await s.execute(select(RefreshToken).where(RefreshToken.jti == t1_payload["jti"]))
+        t1_db = r.scalar_one_or_none()
+    assert t1_db is not None
+    assert t1_db.is_used is True, "T1 must be marked used in DB"
+    assert t1_db.is_revoked is False, "T1 must NOT be revoked (normal rotation)"
+
+    # T2's DB record must be is_used=False
+    async with async_session_factory() as s:
+        r = await s.execute(select(RefreshToken).where(RefreshToken.jti == t2_payload["jti"]))
+        t2_db = r.scalar_one_or_none()
+    assert t2_db is not None
+    assert t2_db.is_used is False
+    assert t2_db.is_revoked is False
+
+
+# ─── 2. T1 replay → family revoke ────────────────────────
+
+@pytest.mark.asyncio
+async def test_replay_revokes_family(client):
+    """T1 refresh → T2，再次使用 T1（replay），整个 family 必须被 revoke"""
+    tokens = await _register_and_login(client, "replay1", "replay1@test.com")
+    t1 = tokens["refresh_token"]
+    t1_jti = decode_token(t1)["jti"]
+
+    # T1 → T2
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t1})
+    assert r.status_code == 200
+    t2 = r.json()["refresh_token"]
+    t2_jti = decode_token(t2)["jti"]
+
+    # T1 replay → 401
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t1})
+    assert r.status_code == 401, "T1 replay must be rejected"
+
+    # T1's family in DB: all tokens must be revoked
+    async with async_session_factory() as s:
+        r = await s.execute(select(RefreshToken).where(RefreshToken.jti == t1_jti))
+        t1_db = r.scalar_one_or_none()
+        family = t1_db.token_family
+
+        r2 = await s.execute(
+            select(RefreshToken).where(RefreshToken.token_family == family)
         )
-        db_record = result.scalar_one_or_none()
+        family_tokens = r2.scalars().all()
 
-    assert db_record is not None, f"DB must contain RefreshToken with jti={jwt_jti}"
-    assert str(db_record.user_id) == jwt_sub, f"DB user_id {db_record.user_id} must match JWT sub {jwt_sub}"
-    assert db_record.jti == jwt_jti, f"DB jti {db_record.jti} must match JWT jti {jwt_jti}"
-    assert db_record.is_used is False, "Token must not be used yet"
-    assert db_record.is_revoked is False, "Token must not be revoked yet"
+    assert len(family_tokens) >= 2, "Family must contain at least T1 and T2"
+    for t in family_tokens:
+        assert t.is_revoked is True, f"Token {t.jti[:8]}... in family must be revoked after replay"
 
 
-@pytest.mark.asyncio
-async def test_refresh_creates_new_matching_jti(client):
-    """Refresh 后新 token 的 JWT.jti 也必须匹配 DB"""
-    await client.post("/api/v1/auth/register", json={
-        "username": "jti_refresh_test", "email": "jti_refresh@test.com", "password": "test123"
-    })
-
-    # 登录
-    r = await client.post("/api/v1/auth/login", json={"email": "jti_refresh@test.com", "password": "test123"})
-    old_refresh = r.json()["refresh_token"]
-
-    # 第一次 refresh
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
-    assert r.status_code == 200
-    new_refresh = r.json()["refresh_token"]
-
-    # 验证新 token 的 JWT.jti === DB.jti
-    new_payload = decode_token(new_refresh)
-    new_jti = new_payload.get("jti")
-    assert new_jti is not None
-
-    async with async_session_factory() as session:
-        result = await session.execute(
-            select(RefreshToken).where(RefreshToken.jti == new_jti)
-        )
-        db_record = result.scalar_one_or_none()
-
-    assert db_record is not None, f"DB must contain new RefreshToken with jti={new_jti}"
-    assert db_record.jti == new_jti, f"DB jti {db_record.jti} must match new JWT jti {new_jti}"
-    assert db_record.is_used is False, "New token must not be used yet"
-
+# ─── 3. T2 → 401 after replay ────────────────────────────
 
 @pytest.mark.asyncio
-async def test_refresh_token_rotates(client):
-    """Refresh token 每次使用后都会轮换"""
-    # 注册
-    await client.post("/api/v1/auth/register", json={
-        "username": "refresh_test", "email": "refresh@test.com", "password": "test123"
-    })
-    
-    # 登录
-    r = await client.post("/api/v1/auth/login", json={"email": "refresh@test.com", "password": "test123"})
-    assert r.status_code == 200
-    old_refresh = r.json()["refresh_token"]
-    
-    # 第一次 refresh
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
-    assert r.status_code == 200
-    new_refresh = r.json()["refresh_token"]
-    
-    # 新旧 token 必须不同
-    assert old_refresh != new_refresh, "Refresh token should rotate"
+async def test_t2_dead_after_replay(client):
+    """T1→T2，replay T1 后 T2 也必须 401"""
+    tokens = await _register_and_login(client, "t2dead", "t2dead@test.com")
+    t1 = tokens["refresh_token"]
 
+    # T1 → T2
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t1})
+    assert r.status_code == 200
+    t2 = r.json()["refresh_token"]
+
+    # replay T1
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t1})
+    assert r.status_code == 401
+
+    # T2 must also be dead
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t2})
+    assert r.status_code == 401, "T2 must be 401 after family revoke"
+
+
+# ─── 4. logout → old token 401 ───────────────────────────
 
 @pytest.mark.asyncio
-async def test_old_refresh_token_cannot_be_reused(client):
-    """旧 refresh token 不能再使用"""
-    await client.post("/api/v1/auth/register", json={
-        "username": "reuse_test", "email": "reuse@test.com", "password": "test123"
-    })
-    
-    r = await client.post("/api/v1/auth/login", json={"email": "reuse@test.com", "password": "test123"})
-    old_refresh = r.json()["refresh_token"]
-    
-    # 第一次 refresh
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
-    assert r.status_code == 200
-    
-    # 第二次使用同一个 token - 必须 401
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
-    assert r.status_code == 401, "Old refresh token should not be reusable"
+async def test_logout_invalidates_token(client):
+    """Logout 后 refresh token 必须 401"""
+    tokens = await _register_and_login(client, "logout1", "logout1@test.com")
+    t1 = tokens["refresh_token"]
+    access = tokens["access_token"]
 
-
-@pytest.mark.asyncio
-async def test_replay_revokes_token_family(client):
-    """重放攻击 revoke 整个 token family"""
-    await client.post("/api/v1/auth/register", json={
-        "username": "family_test", "email": "family@test.com", "password": "test123"
-    })
-    
-    r = await client.post("/api/v1/auth/login", json={"email": "family@test.com", "password": "test123"})
-    token_t1 = r.json()["refresh_token"]
-    token_t1_headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
-    
-    # T1 refresh → T2
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": token_t1})
-    assert r.status_code == 200
-    token_t2 = r.json()["refresh_token"]
-    token_t2_headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
-    
-    # 再次使用 T1 (replay) - 必须 401
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": token_t1})
-    assert r.status_code == 401, "Replayed token should be rejected"
-    
-    # T2 也应该失效（整个 family 被 revoke）
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": token_t2})
-    assert r.status_code == 401, "Token family should be revoked after replay"
-
-
-@pytest.mark.asyncio
-async def test_logout_invalidates_refresh_token(client):
-    """Logout 后 refresh token 失效"""
-    await client.post("/api/v1/auth/register", json={
-        "username": "logout_test", "email": "logout@test.com", "password": "test123"
-    })
-
-    r = await client.post("/api/v1/auth/login", json={"email": "logout@test.com", "password": "test123"})
-    access_token = r.json()["access_token"]
-    refresh_token = r.json()["refresh_token"]
-    auth_headers = {"Authorization": f"Bearer {access_token}"}
-
-    # 登出（JSON body）
+    # logout (JSON body)
     r = await client.post(
         "/api/v1/auth/logout",
-        json={"refresh_token": refresh_token},
-        headers=auth_headers
+        json={"refresh_token": t1},
+        headers={"Authorization": f"Bearer {access}"}
     )
     assert r.status_code == 200
 
-    # 使用旧 refresh token - 必须 401
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
-    assert r.status_code == 401, "Refresh token should be invalidated after logout"
+    # T1 must be 401
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t1})
+    assert r.status_code == 401, "Token must be invalidated after logout"
+
+    # verify DB: token is_revoked=True
+    t1_jti = decode_token(t1)["jti"]
+    async with async_session_factory() as s:
+        r = await s.execute(select(RefreshToken).where(RefreshToken.jti == t1_jti))
+        db_t = r.scalar_one_or_none()
+    assert db_t is not None
+    assert db_t.is_revoked is True, "DB record must be revoked after logout"
 
 
 @pytest.mark.asyncio
-async def test_malformed_refresh_token(client):
+async def test_logout_then_different_login_works(client):
+    """Logout 后用同一用户重新 login，新 token 必须有效"""
+    await client.post("/api/v1/auth/register", json={
+        "username": "logout2", "email": "logout2@test.com", "password": "test123"
+    })
+
+    # login #1
+    r1 = await client.post("/api/v1/auth/login", json={"email": "logout2@test.com", "password": "test123"})
+    t1 = r1.json()["refresh_token"]
+    a1 = r1.json()["access_token"]
+
+    # logout #1
+    await client.post("/api/v1/auth/logout",
+        json={"refresh_token": t1},
+        headers={"Authorization": f"Bearer {a1}"}
+    )
+
+    # login #2 — new session, new tokens
+    r2 = await client.post("/api/v1/auth/login", json={"email": "logout2@test.com", "password": "test123"})
+    assert r2.status_code == 200
+    t2 = r2.json()["refresh_token"]
+    assert t2 != t1, "New login must produce different token"
+
+    # T2 must work
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t2})
+    assert r.status_code == 200, "New token from fresh login must be valid"
+
+
+# ─── 5. 多次 login 不冲突 ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_multiple_logins_independent(client):
+    """登录 3 次获得 T1/T2/T3，各自独立，互不干扰"""
+    await client.post("/api/v1/auth/register", json={
+        "username": "multi1", "email": "multi1@test.com", "password": "test123"
+    })
+
+    # login #1
+    r1 = await client.post("/api/v1/auth/login", json={"email": "multi1@test.com", "password": "test123"})
+    t1 = r1.json()["refresh_token"]
+
+    # login #2
+    r2 = await client.post("/api/v1/auth/login", json={"email": "multi1@test.com", "password": "test123"})
+    t2 = r2.json()["refresh_token"]
+
+    # login #3
+    r3 = await client.post("/api/v1/auth/login", json={"email": "multi1@test.com", "password": "test123"})
+    t3 = r3.json()["refresh_token"]
+
+    # all 3 tokens are different
+    assert len({t1, t2, t3}) == 3, "Three logins must produce three unique tokens"
+
+    # T1 refresh works, T2 and T3 unaffected
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t1})
+    assert r.status_code == 200, "T1 must be valid"
+
+    # T1 is now dead
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t1})
+    assert r.status_code == 401, "T1 dead after use"
+
+    # T2 and T3 still independent and valid
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t2})
+    assert r.status_code == 200, "T2 must still be valid"
+
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t3})
+    assert r.status_code == 200, "T3 must still be valid"
+
+
+# ─── 6. JWT.jti === DB.jti ───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_jwt_jti_matches_db_jti(client):
+    """JWT payload 中的 jti 必须与 DB refresh_tokens.jti 完全一致"""
+    tokens = await _register_and_login(client, "jti1", "jti1@test.com")
+    rt = tokens["refresh_token"]
+    payload = decode_token(rt)
+
+    assert payload["jti"] is not None, "JWT must contain jti"
+    assert payload["type"] == "refresh"
+    assert payload["sub"] is not None
+
+    async with async_session_factory() as s:
+        r = await s.execute(select(RefreshToken).where(RefreshToken.jti == payload["jti"]))
+        db_rec = r.scalar_one_or_none()
+
+    assert db_rec is not None, f"DB must contain token with jti={payload['jti']}"
+    assert str(db_rec.user_id) == payload["sub"]
+    assert db_rec.jti == payload["jti"]
+    assert db_rec.is_used is False
+    assert db_rec.is_revoked is False
+
+
+@pytest.mark.asyncio
+async def test_rotation_new_jti_matches_db(client):
+    """Refresh 后新 token 的 JWT.jti 也必须匹配 DB"""
+    tokens = await _register_and_login(client, "jti2", "jti2@test.com")
+    t1 = tokens["refresh_token"]
+
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": t1})
+    assert r.status_code == 200
+    t2 = r.json()["refresh_token"]
+    t2_payload = decode_token(t2)
+
+    async with async_session_factory() as s:
+        r = await s.execute(select(RefreshToken).where(RefreshToken.jti == t2_payload["jti"]))
+        db_rec = r.scalar_one_or_none()
+
+    assert db_rec is not None, f"DB must contain new token with jti={t2_payload['jti']}"
+    assert db_rec.jti == t2_payload["jti"]
+    assert db_rec.is_used is False
+
+
+# ─── 7. malformed / expired ───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_malformed_token_rejected(client):
     """格式错误的 refresh token 必须 401"""
     r = await client.post("/api/v1/auth/refresh", json={"refresh_token": "not-a-valid-jwt"})
     assert r.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_expired_refresh_token(client):
-    """过期的 refresh token 必须 401"""
-    # 这个测试验证逻辑存在，实际过期需要等待或 mock
-    # 至少验证格式错误时返回 401
-    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": "expired"})
-    assert r.status_code == 401
+async def test_empty_token_rejected(client):
+    """空 refresh token 必须 400"""
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": ""})
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_access_token_as_refresh_rejected(client):
+    """access token 不能当 refresh token 用"""
+    tokens = await _register_and_login(client, "wrongtype", "wrongtype@test.com")
+    access = tokens["access_token"]
+
+    r = await client.post("/api/v1/auth/refresh", json={"refresh_token": access})
+    assert r.status_code == 401, "access token must not work as refresh token"
