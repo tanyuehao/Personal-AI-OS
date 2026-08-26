@@ -1,6 +1,6 @@
-# Phase 1A — Memory Foundation Design Proposal
+# Phase 1A — Memory Foundation Design
 
-> **Status**: Design Draft — Awaiting External Review  
+> **Status**: Design Revision v2 — Awaiting External Review  
 > **Scope**: v0.2 Reliable Memory — Foundation Layer  
 > **Constraint**: No code changes. Design only.
 
@@ -11,58 +11,63 @@
 This document is based on two parallel analyses:
 
 1. **25 design documents** in `docs/` — what the product vision requires
-2. **Current implementation** in `backend/app/` — what actually exists today
+2. **Current implementation** in `backend/app/` — what actually exists today (verified against source code, not assumptions)
 
-Every design decision below is grounded in the gap between these two, not in speculative feature additions.
+Every design decision below is grounded in the gap between these two.
 
 ---
 
 ## 一、Gap Analysis
 
-### 1.1 Current Memory Schema (真实实现)
+### 1.1 Current Memory Schema (真实实现 — 逐字段核对自 `app/models/memory.py`)
 
 ```
 Table: memories
 ──────────────────────────────────────────────────
-memory_id        UUID PK
-user_id          UUID FK → users (indexed)
-memory_type      String(20) NOT NULL (indexed)  -- enum: FACT/EXPERIENCE/OPINION/DECISION/PREFERENCE
-content          Text NOT NULL
-source           String(255) nullable            -- free-text, e.g. "对话提取 (conversation_id: ...)"
-source_document_id UUID FK → documents nullable  -- only links to Documents, not Conversations/Decisions
-importance       Float default 0.5               -- range 0-1
-confidence       Float default 0.8               -- range 0-1
-frequency        Integer default 1               -- incremented on dedup
-last_used_at     DateTime(tz) nullable
-expires_at       DateTime(tz) nullable
-is_confirmed     String(20) default "PENDING"    -- enum: PENDING/CONFIRMED/REJECTED
-created_at       DateTime(tz) NOT NULL
-updated_at       DateTime(tz) NOT NULL
+memory_id          UUID PK                             (line 29)
+user_id            UUID FK → users NOT NULL, indexed   (line 32)
+memory_type        String(20) NOT NULL, indexed        (line 35)  -- enum: FACT/EXPERIENCE/OPINION/DECISION/PREFERENCE
+content            Text NOT NULL                       (line 36)
+source             String(255) nullable                (line 39)  -- free-text, e.g. "对话提取 (conversation_id: ...)"
+source_document_id UUID FK → documents nullable        (line 40)
+importance         Float default 0.5                   (line 43)  -- range 0-1
+confidence         Float default 0.8                   (line 44)  -- range 0-1
+frequency          Integer default 1                   (line 45)
+last_used_at       DateTime(tz) nullable               (line 48)
+expires_at         DateTime(tz) nullable               (line 49)
+is_confirmed       String(20) default "PENDING"        (line 52)  -- enum: PENDING/CONFIRMED/REJECTED
+created_at         DateTime(tz) NOT NULL               (line 55)
+updated_at         DateTime(tz) NOT NULL               (line 56)
 
-Indexes: (user_id, is_confirmed), (user_id, memory_type), (user_id, importance)
-
-Relationships:
-  user → User (back_populates)
+Composite indexes (line 62-66):
+  ix_memory_user_confirmed  (user_id, is_confirmed)
+  ix_memory_user_type       (user_id, memory_type)
+  ix_memory_user_importance (user_id, importance)
 ```
+
+**Corrections from v1 (External Review Item 15):**
+
+| v1 Claim | Actual Code | Corrected? |
+|---|---|---|
+| "last_accessed_at: Column exists but never written" | **No such column.** Model has `last_used_at`, not `last_accessed_at`. | Yes — v1 was wrong. |
+| "expires_at: Column exists but never set by any code path" | Correct — column exists (line 49), no code writes it. | Yes. |
+| "confidence: Column exists but always defaults to 0.8, never recalculated" | Correct — only default, never updated. | Yes. |
+| "importance: Column exists, only incremented by dedup" | Correct — `memory_extractor.py` does `importance = min(1.0, importance + 0.1)`. | Yes. |
 
 **What does NOT exist in the DB:**
 
-| Missing Field | Status |
+| Missing | Status |
 |---|---|
-| `summary` | Not present |
-| `embedding` | Not present — Memory has NO vector search |
-| `last_accessed_at` | Column exists but never written |
-| `assertion_kind` | Not present — no USER_STATED / OBSERVED / INFERRED distinction |
-| `expires_at` | Column exists but never set by any code path |
-| `confidence` | Column exists but always defaults to 0.8, never recalculated |
-| `importance` | Column exists, only incremented by dedup (+0.1), never by scoring formula |
+| `summary` (Text) | Not present |
+| `embedding` (Vector) | Not present — Memory has NO vector search |
+| `assertion_kind` (String) | Not present |
+| `last_accessed_at` | **Does not exist.** `last_used_at` exists (line 48) and is the correct field. |
 
 **What does NOT exist as a table:**
 
 | Missing Table | Purpose (from docs) |
 |---|---|
 | `memory_evidence` | One Memory → Many Evidence records. First-class provenance. |
-| `memory_revisions` | Track content changes (who changed what, when) |
 
 ### 1.2 Current Memory Lifecycle (真实实现)
 
@@ -70,18 +75,16 @@ Relationships:
 Create memory → is_confirmed = "PENDING"
 POST /{id}/confirm → is_confirmed = "CONFIRMED"
 POST /{id}/reject  → is_confirmed = "REJECTED"
-PUT /{id}          → is_confirmed can be set to ANY value (no validation)
+PUT /{id}          → is_confirmed can be set to ANY value (no transition validation)
 DELETE /{id}       → hard delete from DB
 ```
 
 **Missing transitions from docs:**
 
-| Missing Transition | From Design Doc |
+| Missing | Source |
 |---|---|
-| CANDIDATE → ARCHIVED | When source document is deleted and no other evidence remains |
-| CONFIRMED → ARCHIVED | Explicit user action or automatic (no evidence) |
-| CONFIRMED → SUPERSEDED | When a newer memory replaces this one |
-| REJECTED → CANDIDATE | User can reconsider (recover) |
+| CONFIRMED → ARCHIVED | Evidence cascade (document deleted, no remaining evidence) |
+| ARCHIVED → PENDING | New evidence added to archived memory |
 
 ### 1.3 Current Memory Search (真实实现)
 
@@ -91,29 +94,18 @@ No vector/semantic search on memories
 Dedup: ILIKE prefix match on first 50 chars
 ```
 
-**From docs — what scoring should be:**
-
-```
-score = 0.35 × importance + 0.25 × confidence + 0.20 × recurrence + 0.20 × explicit_user_signal
-```
-
 ### 1.4 Current Memory Evidence / Provenance (真实实现)
 
 ```
 source: String(255) — free-text, e.g. "对话提取 (conversation_id: abc)"
-source_document_id: UUID FK → documents — only for document-sourced memories
+source_document_id: UUID FK → documents — only links to Documents
 ```
-
-**From docs — what evidence should be:**
 
 | Design Requirement | Current Status |
 |---|---|
 | One Memory → Many Evidence records | Not implemented (single `source` string) |
-| Evidence tracks source_type + source_id | Only `source_document_id` FK, no polymorphic source |
-| Evidence has evidence_kind | Not present |
-| Evidence has evidence_strength | Not present |
-| Evidence has source_span/quote/locator | Not present |
-| Document deletion → recompute evidence → archive if empty | Not implemented |
+| Evidence tracks source_type + source_id | Only `source_document_id` FK |
+| Document deletion → evidence cascade → archive if empty | Not implemented |
 | Cross-user evidence isolation | Not enforced at DB level |
 
 ### 1.5 Summary of Gaps
@@ -122,320 +114,437 @@ source_document_id: UUID FK → documents — only for document-sourced memories
 |---|---|---|
 | No MemoryEvidence table | **Critical** | Yes |
 | No assertion_kind distinction | **Critical** | Yes |
-| No Alembic migrations | **High** | Yes |
-| Lifecycle missing ARCHIVED/SUPERSEDED | **High** | Yes |
+| No Alembic migrations (schema managed by `create_all`) | **High** | Yes |
+| Lifecycle missing ARCHIVED | **High** | Yes |
 | PUT allows arbitrary status transitions | **High** | Yes |
-| No DB-level user_id isolation constraints | **High** | Yes |
+| No DB-level user isolation on evidence | **High** | Yes |
 | No embedding on Memory | **Medium** | Deferred to 1B |
-| Scoring formula not implemented | **Medium** | Partial (1A) |
-| No memory_revisions audit trail | **Medium** | Yes (minimal) |
 | Document deletion → evidence cascade | **High** | Yes |
 | `summary` field missing | **Low** | Yes |
-| `last_accessed_at` never written | **Low** | Yes |
+| `last_used_at` never written by recall | **Low** | Yes — write it during chat recall |
 
 ---
 
-## 二、Memory Schema v2 — Design
+## 二、Schema Authority — Policy
 
-### 2.1 Existing Fields (保留)
+**Production runtime MUST NOT use `create_all()` / `table.create()` to modify business schema.**
 
-All existing fields are preserved. No field is removed.
+Current code (`app/main.py` lifespan → `init_db()` → `Base.metadata.create_all(checkfirst=True)`) creates a **dual schema authority** with Alembic. This is unacceptable for production.
 
-### 2.2 New Fields
+### 2.1 Rules (Item 16)
+
+1. **Alembic is the sole authority** for production PostgreSQL schema.
+2. **`init_db()` / `create_all()` is FORBIDDEN in production.** Application startup must not auto-create, auto-stamp, or auto-run schema migrations.
+3. **Schema upgrades** are explicit: `alembic upgrade head` executed by operator before deploy.
+4. **SQLite** is retained only as a development convenience. Tests that need PostgreSQL skip on SQLite. CI runs against PostgreSQL + pgvector.
+5. **`alembic stamp head`** is a one-time operation on existing legacy databases, only after schema verification.
+
+### 2.2 Alembic Bootstrap / Adoption Strategy (Item 17)
+
+**Two supported bootstrap paths:**
+
+**Path A — Fresh Database:**
+```
+createdb personal_ai_os
+alembic upgrade head    # Creates all tables from scratch
+```
+
+**Path B — Existing Legacy Database:**
+```
+# Step 1: Verify current schema matches expected baseline
+python -m scripts.verify_schema --database-url=postgresql+asyncpg://...
+
+# Step 2: Only after verification passes
+alembic stamp head     # Marks current schema as baseline
+
+# Step 3: Apply Phase 1A migration
+alembic upgrade head   # Adds new columns + evidence table + constraints
+```
+
+**Forbidden:** `alembic stamp head` without prior schema verification. If verification fails, migration must be written manually or autogenerate must be used.
+
+### 2.3 Migration Tests
+
+```python
+# Test 1: Fresh database
+async def test_fresh_database_migration():
+    """Create empty DB → alembic upgrade head → all tables exist with correct schema."""
+    # Run against a clean PostgreSQL test database
+    # Verify: users, documents, knowledge_chunks, conversations, conversation_messages,
+    #         memories, beliefs, belief_history, decisions, memory_evidence tables exist
+    # Verify: all CHECK constraints active
+    # Verify: all indexes created
+
+# Test 2: Existing legacy database
+async def test_legacy_database_upgrade():
+    """Pre-existing DB with legacy memories → schema verification → stamp → upgrade → data preserved."""
+    # 1. Create legacy DB with init_db() (create_all)
+    # 2. Insert test memories with various is_confirmed values
+    # 3. Run schema verification script
+    # 4. alembic stamp head
+    # 5. alembic upgrade head
+    # 6. All legacy memories still exist, content/type/importance unchanged
+    # 7. assertion_kind defaults to LEGACY_UNKNOWN
+    # 8. Evidence records created from source data
+
+# Test 3: Migration preserves all Memory rows
+async def test_migration_preserves_all_memory_rows():
+    """Every memory row must survive migration without data loss."""
+    # Pre-migration: insert 100 memories with diverse data
+    # Post-migration: count == 100, all fields preserved
+```
+
+### 2.4 Downgrade / Rollback Strategy
+
+```sql
+# Downgrade: remove Phase 1A additions, keep legacy data
+DROP TABLE IF EXISTS memory_evidence;
+ALTER TABLE memories DROP COLUMN IF EXISTS assertion_kind;
+ALTER TABLE memories DROP COLUMN IF EXISTS summary;
+ALTER TABLE memories DROP CONSTRAINT IF EXISTS chk_memory_status;
+ALTER TABLE memories DROP CONSTRAINT IF EXISTS chk_assertion_kind;
+```
+
+**Post-downgrade:** all legacy columns and data are unaffected. `is_confirmed` reverts to unconstrained string (valid values: PENDING/CONFIRMED/REJECTED).
+
+---
+
+## 三、Memory Schema v2 — Design
+
+### 3.1 Existing Fields (保留)
+
+All existing fields preserved. No field removed.
+
+### 3.2 New Fields
 
 | Field | Type | Nullable | Default | Why | Writer | Updater | Index |
 |---|---|---|---|---|---|---|---|
-| `assertion_kind` | String(20) NOT NULL | NO | `"USER_STATED"` | Distinguish user-stated facts from AI-observed patterns from AI-inferred conclusions | Extraction pipeline sets; manual creation defaults to USER_STATED | User can change (correction) | (user_id, assertion_kind) |
+| `assertion_kind` | String(30) NOT NULL | NO | `"LEGACY_UNKNOWN"` | Distinguish epistemic status. LEGACY_UNKNOWN for pre-existing data whose origin cannot be determined. | Manual create → USER_STATED. Extraction → based on source. Legacy → LEGACY_UNKNOWN. | User correction only. | `(user_id, assertion_kind)` |
 | `summary` | Text | YES | NULL | One-line summary for UI display and quick recall | AI extraction pipeline | User can edit | — |
-| `last_accessed_at` | DateTime(tz) | YES | NULL | Track when memory was last recalled in chat | RAG recall service | Updated on each recall | — |
 
-### 2.3 Fields Modified
+### 3.3 assertion_kind vs confirmation — Fully Separated (Item 1)
 
-| Field | Change | Rationale |
+`assertion_kind` and `is_confirmed` are orthogonal axes:
+
+| Axis | Values | Meaning |
 |---|---|---|
-| `is_confirmed` | Rename conceptually to `status`, keep column name `is_confirmed` for backward compat | Supports: PENDING, CONFIRMED, REJECTED, ARCHIVED, SUPERSEDED |
-| `source` | Deprecated — kept for backward compat but new memories should use `memory_evidence` | Migration: existing `source` text becomes a single evidence record |
-| `source_document_id` | Deprecated — replaced by polymorphic evidence linking | Migration: existing FK becomes an evidence record |
+| `assertion_kind` | USER_STATED, OBSERVED, INFERRED, LEGACY_UNKNOWN | **How** the system knows this |
+| `is_confirmed` | PENDING, CONFIRMED, REJECTED, ARCHIVED, SUPERSEDED | **Whether** the user has approved this |
 
-### 2.4 Fields Deliberately NOT Added
+A USER_STATED memory can be PENDING (if AI extracted it from conversation, not yet confirmed).
+An OBSERVED memory can be CONFIRMED (if user reviewed and approved it).
+
+**Manual creation:** `POST /memory` by user → `assertion_kind = USER_STATED`, `is_confirmed = CONFIRMED` (user typed it, so it's confirmed by definition).
+
+**AI extraction from conversation:** `assertion_kind = USER_STATED`, `is_confirmed = PENDING` (user said it, but user hasn't reviewed the extraction yet).
+
+### 3.4 Fields Deliberately NOT Added
 
 | Rejected Field | Why |
 |---|---|
-| `embedding` (vector) | Deferred to 1B. Memory embedding requires careful model selection + recall tuning. Adding it without the retrieval pipeline is dead code. |
-| `semantic_score` | Part of scoring formula, computed at query time, not stored. |
-| `recurrence_count` | Same as existing `frequency`. Already tracked. |
-| `decay_rate` | Already tracked in `memory_strengths` table. Don't duplicate. |
+| `embedding` (vector) | Deferred to 1B. No retrieval pipeline to use it. |
+| `semantic_score` | Computed at query time, not stored. |
+| `recurrence_count` | Same as existing `frequency`. |
+| `decay_rate` | Tracked in `memory_strengths` table. Don't duplicate. |
 
-### 2.5 Three Scores — Explicit Separation
+### 3.5 Three Scores — Explicit Separation
 
-| Score | Definition | Source | Stored? | Recalculated? |
-|---|---|---|---|---|
-| **importance** | How important is this memory to the user's life/work? | User rating + AI estimation (0.35 weight) | Yes, in `memories.importance` | On confirmation, on feedback |
-| **confidence** | How confident is the system that this memory is accurate? | Evidence count × strength (0.25 weight) | Yes, in `memories.confidence` | When evidence added/removed |
-| **relevance** | How relevant is this memory to the current query? | Computed at query time (embedding similarity or keyword match) | No — ephemeral | Every query |
+| Score | Definition | Stored? | Recalculated? |
+|---|---|---|---|
+| **importance** | How important to user's life/work | Yes | On user feedback |
+| **confidence** | System confidence in accuracy (based on evidence) | Yes | When evidence added/removed |
+| **relevance** | How relevant to current query | No — ephemeral | Every query |
 
-These three MUST NOT be conflated. `confidence` is NOT `relevance`. A memory can have high confidence (well-sourced) but zero relevance to a given query.
+**Phase 1A:** `confidence` is recalculation is deferred to 1B (requires eval). Phase 1A establishes the evidence infrastructure that will power future confidence recalculation.
+
+### 3.6 Schema Authority Note
+
+Alembic is the sole source of truth for PostgreSQL schema (§2). The SQLAlchemy model in `app/models/memory.py` must match the Alembic migration. The model is NOT the authority — Alembic is.
 
 ---
 
-## 三、MemoryEvidence — Design
+## 四、MemoryEvidence — Design
 
-### 3.1 Rationale
+### 4.1 Rationale
 
-From docs:
 > "Memory 不能只知道'是什么'，还必须知道'为什么系统认为它是真的'。"
 
 A Memory is a claim. Evidence is the support. One claim can have multiple supports. When supports disappear, the claim must be re-evaluated.
 
-### 3.2 Schema
+### 4.2 Schema
 
 ```
 Table: memory_evidence
 ──────────────────────────────────────────────────
 evidence_id       UUID PK
-memory_id         UUID FK → memories NOT NULL
-user_id           UUID NOT NULL          -- denormalized for isolation enforcement
-source_type       String(20) NOT NULL    -- CONVERSATION / DOCUMENT / DECISION / MANUAL / CORRECTION
-source_id         UUID NULL              -- FK to source entity (polymorphic — see below)
-source_span       Text NULL              -- quote or locator within source (e.g. "第3段", "message_id=abc")
-evidence_kind     String(20) NOT NULL    -- DIRECT_QUOTE / PARAPHRASE / OBSERVATION / USER_CORRECTION
-evidence_strength Float default 1.0      -- range 0-1 (DIRECT_QUOTE=1.0, OBSERVATION=0.7, etc.)
-observed_at       DateTime(tz) NULL      -- when this evidence was first observed
+memory_id         UUID NOT NULL   -- FK composite with user_id (§4.6)
+user_id           UUID NOT NULL   -- FK composite with memory_id (§4.6)
+source_type       String(20) NOT NULL
+source_id         UUID NULL       -- polymorphic reference (§4.4)
+source_span       Text NULL       -- quote or locator
+evidence_kind     String(20) NOT NULL DEFAULT 'DIRECT_QUOTE'
+evidence_strength Float NOT NULL DEFAULT 1.0  -- range 0-1
+observed_at       DateTime(tz) NULL
 created_at        DateTime(tz) NOT NULL
-
-Indexes:
-  (memory_id)           -- lookup all evidence for a memory
-  (user_id)             -- isolation enforcement
-  (source_type, source_id) -- find all evidence from a specific source entity
-
-Constraints:
-  FK(memory_id) → memories.memory_id ON DELETE CASCADE
-  user_id MUST match memory.user_id (enforced by service layer + CHECK constraint)
 ```
 
-### 3.3 Source Types
+### 4.3 Source Types
 
 | source_type | source_id points to | Example |
 |---|---|---|
 | `CONVERSATION` | `conversation_messages.message_id` | "In message X, user said 'I prefer Python'" |
 | `DOCUMENT` | `documents.document_id` | "In doc Y, section Z says 'Launch date 2031-09-17'" |
 | `DECISION` | `decisions.decision_id` | "User chose Python in decision about tech stack" |
-| `MANUAL` | NULL (user entered directly) | User typed "I prefer Python" in memory form |
-| `CORRECTION` | `conversation_messages.message_id` | User corrected AI: "No, it's Python not Java" |
+| `MANUAL` | NULL | User typed "I prefer Python" directly |
+| `CORRECTION` | `conversation_messages.message_id` | User corrected AI |
+| `LEGACY_UNKNOWN` | NULL | Migrated from pre-1A `source` text where origin can't be determined |
 
-### 3.4 Polymorphic Source — Implementation
+### 4.4 Polymorphic Source — Domain Operation (Item 14)
 
-Instead of 5 separate FK columns, use a single `source_id` with `source_type` discriminator. Service layer resolves the FK at read time.
+**Source deletion is a domain operation, not just SQL cascading:**
 
-**Why NOT polymorphic FK at DB level:** PostgreSQL doesn't natively support multi-table FK. Options:
+```python
+def on_source_deleted(source_type: str, source_id: UUID, db: Session):
+    """
+    Domain operation: called when a source entity is deleted.
+    NOT a database cascade — this is application-level orchestration.
+    """
+    # 1. Find all evidence from this source
+    evidence_records = db.query(MemoryEvidence).filter(
+        MemoryEvidence.source_type == source_type,
+        MemoryEvidence.source_id == source_id
+    ).all()
 
-1. **Application-level validation** (chosen): Service layer ensures `source_id` references the correct table for the given `source_type`. DB has `CHECK` constraint on `source_type` values only.
+    # 2. Delete evidence records
+    for ev in evidence_records:
+        db.delete(ev)
 
-2. **Separate FK columns per type**: Rejected — schema bloat, nulls everywhere.
+    # 3. For each affected memory, re-evaluate status
+    affected_memory_ids = {ev.memory_id for ev in evidence_records}
+    for memory_id in affected_memory_ids:
+        remaining = db.query(MemoryEvidence).filter(
+            MemoryEvidence.memory_id == memory_id
+        ).count()
+        if remaining == 0:
+            memory = db.query(Memory).get(memory_id)
+            if memory.is_confirmed == "CONFIRMED":
+                memory.is_confirmed = "ARCHIVED"
 
-3. **Generic FK (table_name + id)**: Rejected — breaks referential integrity.
+    db.commit()
+```
 
-### 3.5 Evidence Lifecycle Rules
+**Why NOT database-level polymorphic FK:** PostgreSQL doesn't support multi-table FK. Options:
 
-| Event | Rule |
+1. **Application-level validation** (chosen): Service resolves `source_id` → correct table at read/write time. DB has CHECK on `source_type` only.
+2. Separate FK columns per type: Rejected — schema bloat.
+3. Generic FK (table_name + id): Rejected — breaks referential integrity.
+
+### 4.5 Evidence Lifecycle Rules
+
+| Event | Domain Operation |
 |---|---|
-| **Source deleted (document)** | Find all evidence with `source_type=DOCUMENT, source_id=deleted_doc_id`. Remove those evidence records. If memory has 0 remaining evidence → set `status=ARCHIVED` (not delete). |
-| **Source deleted (conversation)** | Find evidence with `source_type=CONVERSATION, source_id=deleted_msg_id`. Remove. Same cascade rule. |
-| **Source deleted (decision)** | Find evidence with `source_type=DECISION, source_id=deleted_dec_id`. Remove. Same cascade rule. |
-| **User adds evidence** | Insert record. Recalculate `confidence`. |
-| **User removes evidence** | Delete record. Recalculate `confidence`. If 0 evidence → suggest archive. |
-| **Multiple sources** | Each evidence is independent. More sources = higher confidence. |
+| **Source deleted (document)** | `on_source_deleted("DOCUMENT", doc_id, db)` |
+| **Source deleted (conversation)** | `on_source_deleted("CONVERSATION", msg_id, db)` |
+| **Source deleted (decision)** | `on_source_deleted("DECISION", dec_id, db)` |
+| **User adds evidence** | Insert record. |
+| **User removes evidence** | Delete record. Re-evaluate status (archive if 0 evidence + CONFIRMED). |
+| **Multiple sources** | Each evidence is independent. |
 
-### 3.6 Confidence Recalculation
+### 4.6 Cross-User Isolation (Item 10 — Composite FK, Not Trigger)
 
-When evidence changes, `confidence` is updated:
+**Design:** `memory_evidence` uses a composite FK `(memory_id, user_id)` referencing `memories(memory_id, user_id)`.
 
+This means PostgreSQL enforces that evidence can only reference a memory belonging to the same user — without triggers.
+
+```sql
+CREATE TABLE memory_evidence (
+    evidence_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    memory_id         UUID NOT NULL,
+    user_id           UUID NOT NULL,
+    source_type       VARCHAR(20) NOT NULL,
+    source_id         UUID,
+    source_span       TEXT,
+    evidence_kind     VARCHAR(20) NOT NULL DEFAULT 'DIRECT_QUOTE',
+    evidence_strength FLOAT NOT NULL DEFAULT 1.0,
+    observed_at       TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Composite FK: evidence must reference a memory owned by the same user
+    CONSTRAINT fk_evidence_memory
+        FOREIGN KEY (memory_id, user_id)
+        REFERENCES memories(memory_id, user_id)
+        ON DELETE CASCADE,
+
+    -- Check constraints
+    CONSTRAINT chk_evidence_source_type
+        CHECK (source_type IN ('CONVERSATION', 'DOCUMENT', 'DECISION', 'MANUAL', 'CORRECTION', 'LEGACY_UNKNOWN')),
+    CONSTRAINT chk_evidence_kind
+        CHECK (evidence_kind IN ('DIRECT_QUOTE', 'PARAPHRASE', 'OBSERVATION', 'USER_CORRECTION')),
+    CONSTRAINT chk_evidence_strength_range
+        CHECK (evidence_strength >= 0.0 AND evidence_strength <= 1.0)
+);
 ```
-If evidence_count == 0: confidence = 0.0, suggest ARCHIVED
-If evidence_count == 1: confidence = evidence_strength × 0.6
-If evidence_count == 2: confidence = avg(evidence_strengths) × 0.8
-If evidence_count >= 3: confidence = avg(evidence_strengths) × 0.95
+
+**This requires `memories` to have a composite UNIQUE on `(memory_id, user_id)`** — which it already does (PK + FK).
+
+**DB-level failure test (Item 18):**
+```python
+async def test_evidence_rejects_cross_user_insert():
+    """Inserting evidence with mismatched user_id must fail at DB level."""
+    # memory.user_id = A
+    # evidence.user_id = B, evidence.memory_id = memory_id
+    # PostgreSQL MUST reject: FK violation on (memory_id, user_id) composite
+    # This is NOT a service-level check — it's enforced by the DB constraint
 ```
-
-The multiplier increases with evidence count (corroboration effect).
-
-### 3.7 Cross-User Isolation
-
-- `user_id` is denormalized on every evidence record
-- Service layer ALWAYS filters by `user_id`
-- DB CHECK constraint: `user_id` on `memory_evidence` must match `user_id` on the linked `memory_id` (enforced via trigger or application-level check on every write)
 
 ---
 
-## 四、Epistemic / Assertion Kind — Design
+## 五、Epistemic / Assertion Kind — Design (Item 1)
 
-### 4.1 Three Kinds
+### 5.1 Four Values (Item 1 — LEGACY_UNKNOWN added)
 
-| Kind | Definition | Example | Confirmation Policy |
-|---|---|---|---|
-| `USER_STATED` | User explicitly said or wrote this | "I prefer Python" | Default for manual creation. Auto-confirmed if user typed it. |
-| `OBSERVED` | System observed a pattern from user's data | "4 of your last 5 projects use Python" | Starts as CANDIDATE. Requires user confirmation. |
-| `INFERRED` | AI concluded this from combining evidence | "You may prefer Python for backend development" | Starts as CANDIDATE. Lower confidence ceiling (max 0.7). Requires user confirmation. |
+| Kind | Definition | Example |
+|---|---|---|
+| `USER_STATED` | User explicitly said or wrote this | "I prefer Python" |
+| `OBSERVED` | System observed a pattern from user's data | "4 of your last 5 projects use Python" |
+| `INFERRED` | AI concluded this from combining evidence | "You may prefer Python for backend" |
+| `LEGACY_UNKNOWN` | Pre-1A memory whose epistemic origin cannot be determined | Any migrated memory without clear source |
 
-### 4.2 Policy Matrix
+### 5.2 Policy Matrix
 
-| Policy | USER_STATED | OBSERVED | INFERRED |
-|---|---|---|---|
-| **Initial status** | CONFIRMED (user typed it) | PENDING (candidate) | PENDING (candidate) |
-| **Confidence ceiling** | 1.0 | 0.9 | 0.7 |
-| **Can auto-confirm?** | Yes (manual creation) | No | No |
-| **Retrieval priority** | Highest | Medium | Lowest |
-| **UI badge** | "User stated" | "Observed" | "AI inference" |
-| **Deletion behavior** | User deletes → hard delete | User deletes → hard delete | User deletes → hard delete + learn preference |
-| **Correction behavior** | User edits → create revision | User rejects → mark rejected | User rejects → increase negative signal |
+| Policy | USER_STATED | OBSERVED | INFERRED | LEGACY_UNKNOWN |
+|---|---|---|---|---|
+| **Initial status** | Depends on creation path (see §5.3) | PENDING | PENDING | PRESERVED (whatever is_confirmed was) |
+| **Confidence ceiling** | 1.0 | 0.9 | 0.7 | N/A |
+| **Retrieval priority** | Highest | Medium | Lowest | Lowest |
+| **UI badge** | "User stated" | "Observed" | "AI inference" | No badge |
+| **Can confirm directly?** | Only if manual creation | No | No | N/A |
 
-### 4.3 Extraction Pipeline Assignment
+### 5.3 Confirmation Lifecycle Is Separated from assertion_kind (Item 1)
 
-| Source | Default assertion_kind |
-|---|---|
-| User manually creates memory | `USER_STATED` |
-| AI extracts from user's conversation message | `USER_STATED` (user said it) |
-| AI extracts from AI assistant message | `OBSERVED` (AI observed from context) |
-| AI pattern detection across conversations | `OBSERVED` |
-| AI inference from combining multiple sources | `INFERRED` |
+**Manual creation (`POST /memory` by user):**
+→ `assertion_kind = USER_STATED`, `is_confirmed = CONFIRMED` (user typed it, confirmed by definition)
+
+**AI extraction from conversation user message:**
+→ `assertion_kind = USER_STATED`, `is_confirmed = PENDING` (user said it, but extraction not yet reviewed)
+
+**AI extraction from AI assistant message:**
+→ `assertion_kind = OBSERVED`, `is_confirmed = PENDING`
+
+**AI pattern detection:**
+→ `assertion_kind = OBSERVED`, `is_confirmed = PENDING`
+
+**AI inference:**
+→ `assertion_kind = INFERRED`, `is_confirmed = PENDING`
+
+**Legacy migration:**
+→ `assertion_kind = LEGACY_UNKNOWN`, `is_confirmed` = preserved as-is
 
 ---
 
-## 五、Memory Lifecycle State Machine
+## 六、Memory Lifecycle State Machine
 
-### 5.1 States
+### 6.1 States
 
 | State | Meaning |
 |---|---|
 | `PENDING` | Candidate awaiting user decision. Not used in recall. |
-| `CONFIRMED` | User approved. Used in recall. Full confidence. |
+| `CONFIRMED` | User approved. Used in recall. |
 | `REJECTED` | User explicitly rejected. Not used in recall. Hidden from UI. |
-| `ARCHIVED` | Source evidence was removed (e.g. document deleted). Not used in recall. Preserved for audit. Can be restored if new evidence added. |
-| `SUPERSEDED` | Replaced by a newer version of the same memory. Not used in recall. Audit trail preserved. |
+| `ARCHIVED` | Source evidence was removed. Not used in recall. Preserved for audit. |
+| `SUPERSEDED` | Reserved for Phase 1C (Item 18 — enum value only, no transitions). |
 
-### 5.2 State Machine
+### 6.2 State Machine (Item 18 — ARCHIVED + evidence → PENDING, not CONFIRMED)
 
 ```
-                    ┌──────────────────────────────────────────────────┐
-                    │                                                  │
-                    ▼                                                  │
-              ┌──────────┐                                            │
-    create →  │ PENDING  │ ──── confirm ──────→ ┌────────────┐        │
-              └──────────┘                      │ CONFIRMED  │        │
-                    │                           └────────────┘        │
-                    │ reject          │ archive         │ supersede   │
-                    ▼                 ▼                 ▼             │
-              ┌──────────┐    ┌──────────┐      ┌────────────┐       │
-              │ REJECTED │    │ ARCHIVED │      │ SUPERSEDED │       │
-              └──────────┘    └──────────┘      └────────────┘       │
-                    │                 │                                │
-                    │ (no transition  │ restore (add new evidence)    │
-                    │  out of this    │───────────────────────────────┘
-                    │  state)         │
-                    └─────────────────┘
+                    ┌───────────────────────────────────────────────────┐
+                    │                                                   │
+                    ▼                                                   │
+              ┌──────────┐                                             │
+    create →  │ PENDING  │ ──── confirm ──────→ ┌────────────┐         │
+              └──────────┘                      │ CONFIRMED  │         │
+                    │                           └────────────┘         │
+                    │ reject          │ archive                        │
+                    ▼                 ▼                                │
+              ┌──────────┐    ┌──────────┐                            │
+              │ REJECTED │    │ ARCHIVED │ ── add evidence → ─────────┘
+              └──────────┘    └──────────┘     (becomes PENDING)
 ```
 
-### 5.3 Legal Transitions
+### 6.3 Legal Transitions
 
 | From | To | Trigger | Permission |
 |---|---|---|---|
-| (new) | PENDING | AI extraction or manual creation | System / User |
-| PENDING | CONFIRMED | `POST /{id}/confirm` or `POST /confirm-all` | User only |
-| PENDING | REJECTED | `POST /{id}/reject` or `POST /reject-all` | User only |
-| CONFIRMED | ARCHIVED | Source evidence cascade (document deleted, no remaining evidence) | System (automatic) |
-| CONFIRMED | SUPERSEDED | New memory replaces old (same topic, updated info) | System (dedup pipeline) or User |
-| ARCHIVED | CONFIRMED | Add new evidence (e.g. new document supports same claim) | User only |
+| (new) | PENDING | AI extraction, or legacy migration | System |
+| (new, manual) | CONFIRMED | `POST /memory` by user | User |
+| PENDING | CONFIRMED | `POST /{id}/confirm` | User |
+| PENDING | REJECTED | `POST /{id}/reject` | User |
+| CONFIRMED | ARCHIVED | Evidence cascade (source deleted, 0 evidence remains) | System (automatic) |
+| ARCHIVED | PENDING | New evidence added (item 18: not directly to CONFIRMED) | System / User |
 
-### 5.4 Illegal Transitions (rejected by service layer)
+### 6.4 Illegal Transitions
 
 | From | To | Why |
 |---|---|---|
-| REJECTED | CONFIRMED | Must go through PENDING first (user must re-evaluate) |
-| REJECTED | ARCHIVED | No evidence to remove from a rejected memory |
-| SUPERSEDED | CONFIRMED | Superseded is terminal for that version; use the new version |
-| ARCHIVED | REJECTED | Archived is not rejection; it's evidence removal |
-| CONFIRMED | PENDING | Cannot un-confirm (use SUPERSEDED if replacing) |
+| REJECTED | CONFIRMED | Must re-evaluate (go through PENDING) |
+| REJECTED | ARCHIVED | No evidence relationship |
+| ARCHIVED | CONFIRMED | New evidence → PENDING, user must re-evaluate |
+| CONFIRMED | PENDING | Cannot un-confirm |
+| (any) | SUPERSEDED | Reserved for Phase 1C (no transitions allowed in 1A) |
 
-### 5.5 Delete vs Archive
+### 6.5 Delete vs Archive
 
 | Action | Delete | Archive |
 |---|---|---|
-| DB record | Removed from `memories` | Stays in `memories` with `status=ARCHIVED` |
-| Evidence | CASCADE deleted | Evidence records removed, memory preserved |
+| DB record | Removed from `memories` | Stays with `is_confirmed = ARCHIVED` |
+| Evidence | Hard deleted | Evidence records removed, memory preserved |
 | Audit | Lost | Preserved |
 | Recall | Invisible | Invisible |
-| Restore | Impossible | Possible (add evidence → CONFIRMED) |
-| Use case | User explicitly wants it gone | Source removed, but claim may return |
+| Restore | Impossible | Possible via add evidence → PENDING → user confirm |
 
 ---
 
-## 六、Database Invariants
+## 七、Database Invariants
 
-### 6.1 Constraints
+### 7.1 Constraints
 
 ```sql
--- 1. Memory must belong to user
+-- 1. Memory user FK (existing, enforce)
 ALTER TABLE memories ADD CONSTRAINT fk_memory_user
     FOREIGN KEY (user_id) REFERENCES users(user_id);
 
--- 2. Evidence must belong to same user as memory (service-level + trigger)
-CREATE OR REPLACE FUNCTION check_evidence_user_match()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF NEW.user_id != (SELECT user_id FROM memories WHERE memory_id = NEW.memory_id) THEN
-        RAISE EXCEPTION 'Evidence user_id must match memory user_id';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+-- 2. Evidence composite FK — enforces user ownership at DB level
+-- (§4.6 above, composite FK on memory_id + user_id)
 
-CREATE TRIGGER trg_evidence_user_check
-    BEFORE INSERT OR UPDATE ON memory_evidence
-    FOR EACH ROW EXECUTE FUNCTION check_evidence_user_match();
-
--- 3. Status must be valid
+-- 3. Status valid values
 ALTER TABLE memories ADD CONSTRAINT chk_memory_status
     CHECK (is_confirmed IN ('PENDING', 'CONFIRMED', 'REJECTED', 'ARCHIVED', 'SUPERSEDED'));
 
--- 4. assertion_kind must be valid
+-- 4. assertion_kind valid values
 ALTER TABLE memories ADD CONSTRAINT chk_assertion_kind
-    CHECK (assertion_kind IN ('USER_STATED', 'OBSERVED', 'INFERRED'));
+    CHECK (assertion_kind IN ('USER_STATED', 'OBSERVED', 'INFERRED', 'LEGACY_UNKNOWN'));
 
--- 5. source_type must be valid
-ALTER TABLE memory_evidence ADD CONSTRAINT chk_evidence_source_type
-    CHECK (source_type IN ('CONVERSATION', 'DOCUMENT', 'DECISION', 'MANUAL', 'CORRECTION'));
+-- 5-8. Evidence constraints (§4.6 above)
 
--- 6. evidence_kind must be valid
-ALTER TABLE memory_evidence ADD CONSTRAINT chk_evidence_kind
-    CHECK (evidence_kind IN ('DIRECT_QUOTE', 'PARAPHRASE', 'OBSERVATION', 'USER_CORRECTION'));
-
--- 7. Confidence range
+-- 9. Confidence range
 ALTER TABLE memories ADD CONSTRAINT chk_confidence_range
     CHECK (confidence >= 0.0 AND confidence <= 1.0);
 
--- 8. Importance range
+-- 10. Importance range
 ALTER TABLE memories ADD CONSTRAINT chk_importance_range
     CHECK (importance >= 0.0 AND importance <= 1.0);
-
--- 9. Evidence strength range
-ALTER TABLE memory_evidence ADD CONSTRAINT chk_evidence_strength_range
-    CHECK (evidence_strength >= 0.0 AND evidence_strength <= 1.0);
-
--- 10. Timestamps must be UTC (application-level, not DB constraint)
--- PostgreSQL TIMESTAMPTZ handles this naturally.
 ```
 
-### 6.2 Indexes
+### 7.2 Indexes
 
 ```sql
--- Existing (keep)
-CREATE INDEX ix_memory_user_confirmed ON memories (user_id, is_confirmed);
-CREATE INDEX ix_memory_user_type ON memories (user_id, memory_type);
-CREATE INDEX ix_memory_user_importance ON memories (user_id, importance);
+-- Existing (keep, no duplicates — Item 18)
+-- ix_memory_user_confirmed already exists on (user_id, is_confirmed)
+-- ix_memory_user_type already exists on (user_id, memory_type)
+-- ix_memory_user_importance already exists on (user_id, importance)
 
 -- New
 CREATE INDEX ix_memory_assertion_kind ON memories (user_id, assertion_kind);
-CREATE INDEX ix_memory_status ON memories (user_id, is_confirmed);  -- alias for readability
 CREATE INDEX ix_evidence_memory ON memory_evidence (memory_id);
 CREATE INDEX ix_evidence_user ON memory_evidence (user_id);
 CREATE INDEX ix_evidence_source ON memory_evidence (source_type, source_id);
@@ -443,251 +552,251 @@ CREATE INDEX ix_evidence_source ON memory_evidence (source_type, source_id);
 
 ---
 
-## 七、Migration Strategy
+## 八、Migration Strategy
 
-### 7.1 Alembic Setup
+### 8.1 Bootstrap Paths (§2.2)
 
-Current state: No Alembic version files exist. Tables created via `init_db()` with `create_all(checkfirst=True)`.
+- **Fresh DB**: `alembic upgrade head` creates everything.
+- **Legacy DB**: `verify_schema` → `alembic stamp head` → `alembic upgrade head`.
 
-Step 1: Generate initial migration from current schema (`alembic revision --autogenerate`).
-Step 2: Stamp it as applied (`alembic stamp head`).
-Step 3: Create the Phase 1A migration.
-
-### 7.2 Phase 1A Migration (`002_memory_foundation.py`)
+### 8.2 Phase 1A Migration (`002_memory_foundation.py`)
 
 ```sql
--- Step 1: Add new columns to memories
-ALTER TABLE memories ADD COLUMN assertion_kind VARCHAR(20) NOT NULL DEFAULT 'USER_STATED';
+-- Step 1: Add new columns
+ALTER TABLE memories ADD COLUMN assertion_kind VARCHAR(30) NOT NULL DEFAULT 'LEGACY_UNKNOWN';
 ALTER TABLE memories ADD COLUMN summary TEXT;
 
--- Step 2: Create memory_evidence table
+-- Step 2: Create evidence table with composite FK (§4.6)
 CREATE TABLE memory_evidence (
-    evidence_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    memory_id      UUID NOT NULL REFERENCES memories(memory_id) ON DELETE CASCADE,
-    user_id        UUID NOT NULL REFERENCES users(user_id),
-    source_type    VARCHAR(20) NOT NULL,
-    source_id      UUID,
-    source_span    TEXT,
-    evidence_kind  VARCHAR(20) NOT NULL DEFAULT 'DIRECT_QUOTE',
+    evidence_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    memory_id         UUID NOT NULL,
+    user_id           UUID NOT NULL,
+    source_type       VARCHAR(20) NOT NULL,
+    source_id         UUID,
+    source_span       TEXT,
+    evidence_kind     VARCHAR(20) NOT NULL DEFAULT 'DIRECT_QUOTE',
     evidence_strength FLOAT NOT NULL DEFAULT 1.0,
-    observed_at    TIMESTAMPTZ,
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    observed_at       TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_evidence_memory FOREIGN KEY (memory_id, user_id)
+        REFERENCES memories(memory_id, user_id) ON DELETE CASCADE,
+    CONSTRAINT chk_evidence_source_type CHECK (source_type IN ('CONVERSATION','DOCUMENT','DECISION','MANUAL','CORRECTION','LEGACY_UNKNOWN')),
+    CONSTRAINT chk_evidence_kind CHECK (evidence_kind IN ('DIRECT_QUOTE','PARAPHRASE','OBSERVATION','USER_CORRECTION')),
+    CONSTRAINT chk_evidence_strength_range CHECK (evidence_strength >= 0.0 AND evidence_strength <= 1.0)
 );
-CREATE INDEX ix_evidence_memory ON memory_evidence (memory_id);
-CREATE INDEX ix_evidence_user ON memory_evidence (user_id);
-CREATE INDEX ix_evidence_source ON memory_evidence (source_type, source_id);
 
--- Step 3: Migrate existing source data → evidence records
--- For each memory with source_document_id NOT NULL:
+-- Step 3: Migrate legacy source → evidence
+-- source_document_id NOT NULL → DOCUMENT evidence
 INSERT INTO memory_evidence (memory_id, user_id, source_type, source_id, evidence_kind, evidence_strength)
 SELECT memory_id, user_id, 'DOCUMENT', source_document_id, 'PARAPHRASE', 0.7
 FROM memories WHERE source_document_id IS NOT NULL;
 
--- For each memory with source text but no source_document_id:
-INSERT INTO memory_evidence (memory_id, user_id, source_type, source_id, evidence_kind, evidence_strength)
-SELECT memory_id, user_id, 'MANUAL', NULL, 'DIRECT_QUOTE', 1.0
-WHERE source IS NOT NULL AND source_document_id IS NULL;
+-- source text parseable as conversation → CONVERSATION evidence
+-- source text like "对话提取 (conversation_id: xxx)" → CONVERSATION, source_id=NULL
+INSERT INTO memory_evidence (memory_id, user_id, source_type, source_id, evidence_kind, evidence_strength, source_span)
+SELECT memory_id, user_id, 'LEGACY_UNKNOWN', NULL, 'PARAPHRASE', 0.5, source
+FROM memories
+WHERE source IS NOT NULL AND source_document_id IS NULL
+AND source NOT LIKE '%对话提取%';  -- those that can't be reliably parsed
+
+-- source text parseable as conversation reference → CONVERSATION evidence
+INSERT INTO memory_evidence (memory_id, user_id, source_type, source_id, evidence_kind, evidence_strength, source_span)
+SELECT memory_id, user_id, 'CONVERSATION', NULL, 'PARAPHRASE', 0.6, source
+FROM memories
+WHERE source LIKE '%对话提取%';
 
 -- Step 4: Add CHECK constraints
 ALTER TABLE memories ADD CONSTRAINT chk_memory_status
-    CHECK (is_confirmed IN ('PENDING', 'CONFIRMED', 'REJECTED', 'ARCHIVED', 'SUPERSEDED'));
+    CHECK (is_confirmed IN ('PENDING','CONFIRMED','REJECTED','ARCHIVED','SUPERSEDED'));
 ALTER TABLE memories ADD CONSTRAINT chk_assertion_kind
-    CHECK (assertion_kind IN ('USER_STATED', 'OBSERVED', 'INFERRED'));
-ALTER TABLE memory_evidence ADD CONSTRAINT chk_evidence_source_type
-    CHECK (source_type IN ('CONVERSATION', 'DOCUMENT', 'DECISION', 'MANUAL', 'CORRECTION'));
-ALTER TABLE memory_evidence ADD CONSTRAINT chk_evidence_kind
-    CHECK (evidence_kind IN ('DIRECT_QUOTE', 'PARAPHRASE', 'OBSERVATION', 'USER_CORRECTION'));
-
--- Step 5: Add trigger for cross-user evidence isolation
--- (see §6.1 above)
+    CHECK (assertion_kind IN ('USER_STATED','OBSERVED','INFERRED','LEGACY_UNKNOWN'));
 ```
 
-### 7.3 Rollback Strategy
-
-```sql
--- Reverse migration:
--- 1. Drop trigger
-DROP TRIGGER IF EXISTS trg_evidence_user_check ON memory_evidence;
-DROP FUNCTION IF EXISTS check_evidence_user_match();
-
--- 2. Drop evidence table (cascades to constraints)
-DROP TABLE IF EXISTS memory_evidence;
-
--- 3. Drop new columns from memories
-ALTER TABLE memories DROP COLUMN IF EXISTS assertion_kind;
-ALTER TABLE memories DROP COLUMN IF EXISTS summary;
-
--- 4. Drop check constraints
-ALTER TABLE memories DROP CONSTRAINT IF EXISTS chk_memory_status;
-ALTER TABLE memories DROP CONSTRAINT IF EXISTS chk_assertion_kind;
-
--- Existing data in memories table is UNAFFECTED by rollback.
-```
-
-### 7.4 Data Preservation
+### 8.3 Data Preservation
 
 | Existing Data | Migration Action | After Migration |
 |---|---|---|
-| `memory.source` text | Copied to `memory_evidence` as MANUAL evidence | Column kept (deprecated), evidence table has structured record |
-| `memory.source_document_id` FK | Copied to `memory_evidence` as DOCUMENT evidence | Column kept (deprecated), FK preserved |
-| `memory.is_confirmed = PENDING/CONFIRMED/REJECTED` | Unchanged | Still valid values; ARCHIVED/SUPERSEDED are new additions |
-| All other fields | Unchanged | — |
+| `memory.source` with `source_document_id` | → DOCUMENT evidence | Column kept (deprecated) |
+| `memory.source` with "对话提取" text | → CONVERSATION evidence | Column kept |
+| `memory.source` with other text | → LEGACY_UNKNOWN evidence | Column kept |
+| `memory.source = NULL` | No evidence created | — |
+| `memory.is_confirmed = PENDING/CONFIRMED/REJECTED` | Unchanged | Still valid |
 
-**No data is deleted. No existing field is removed.**
+**No data deleted. No existing field removed.**
+
+### 8.4 Rollback
+
+```sql
+DROP TABLE IF EXISTS memory_evidence;
+ALTER TABLE memories DROP COLUMN IF EXISTS assertion_kind;
+ALTER TABLE memories DROP COLUMN IF EXISTS summary;
+ALTER TABLE memories DROP CONSTRAINT IF EXISTS chk_memory_status;
+ALTER TABLE memories DROP CONSTRAINT IF EXISTS chk_assertion_kind;
+```
 
 ---
 
-## 八、Backward Compatibility
+## 九、Backward Compatibility
 
-### 8.1 API Compatibility
+### 9.1 API
 
 | Endpoint | Change | Breaking? |
 |---|---|---|
-| `POST /memory` | New optional field `assertion_kind` (default: USER_STATED) | No — additive |
-| `GET /memory` | Response adds `assertion_kind`, `summary` fields | No — additive |
-| `GET /memory/{id}` | Response adds `assertion_kind`, `summary` | No — additive |
-| `PUT /memory/{id}` | `is_confirmed` now validates transitions (ARCHIVED, SUPERSEDED added) | **Soft breaking** — arbitrary status writes now validated |
+| `POST /memory` | New optional field `assertion_kind` (default: USER_STATED for manual) | No |
+| `GET /memory` | Response adds `assertion_kind`, `summary` | No |
+| `PUT /memory/{id}` | `is_confirmed` now validates transitions | Soft — arbitrary writes rejected |
 | `POST /memory/{id}/confirm` | No change | No |
 | `POST /memory/{id}/reject` | No change | No |
-| `POST /memory/search` | No change | No |
 
-**New endpoints (additive):**
+**New endpoints:**
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /memory/{id}/evidence` | List evidence for a memory |
-| `POST /memory/{id}/evidence` | Add evidence to a memory |
+| `GET /memory/{id}/evidence` | List evidence |
+| `POST /memory/{id}/evidence` | Add evidence |
 | `DELETE /memory/{id}/evidence/{evidence_id}` | Remove evidence |
-| `POST /memory/{id}/archive` | Archive a memory |
-| `POST /memory/{id}/restore` | Restore archived memory |
+| `POST /memory/{id}/archive` | Archive |
 
-### 8.2 Frontend Compatibility
+### 9.2 Frontend
 
-| Component | Impact |
-|---|---|
-| Memory list page | Works unchanged. New fields (`assertion_kind`, `summary`) appear but don't break layout. |
-| Memory detail page | Works unchanged. Can show badge for assertion_kind. |
-| Confirm/reject flow | Works unchanged. ARCHIVED memories hidden from candidate list. |
-| Memory search | Works unchanged. |
-| Chat recall | Works unchanged. |
+All existing components work unchanged. New fields are additive.
 
-### 8.3 Test Compatibility
+### 9.3 Tests
 
-| Test | Impact |
-|---|---|
-| `test_create_memory` | Passes (assertion_kind defaults to USER_STATED) |
-| `test_list_memories` | Passes (new fields in response) |
-| `test_search_memories` | Passes (search unchanged) |
-| `test_e2e_memory_candidate_flow` | Passes (confirm/reject unchanged) |
-| All auth/security/isolation tests | Unaffected |
+All existing tests pass unchanged. `test_create_memory` passes because `assertion_kind` defaults to USER_STATED. `test_e2e_memory_candidate_flow` passes because confirm/reject logic is unchanged.
 
 ---
 
-## 九、Phase 1A Tests — Design
+## 十、Phase 1A Behavioral Tests (Item 18)
 
-### 9.1 Migration Test
+### 10.1 Migration Tests
 
 ```python
-async def test_migration_preserves_existing_memories():
-    """Pre-migration memories must survive migration with data intact."""
-    # 1. Create memories with various is_confirmed values before migration
-    # 2. Run migration
-    # 3. Verify all memories exist with original content, type, importance
-    # 4. Verify assertion_kind defaults to USER_STATED
-    # 5. Verify evidence records created from source_document_id / source text
+async def test_fresh_database_migration():
+    """Fresh DB → alembic upgrade head → all tables + constraints exist."""
+    # Verify: users, documents, knowledge_chunks, memories, memory_evidence
+    # Verify: CHECK constraints active
+    # Verify: composite FK on memory_evidence(memory_id, user_id) exists
+
+async def test_legacy_database_upgrade():
+    """Legacy DB → verify → stamp → upgrade → data preserved."""
+    # Pre-existing memories survive
+    # assertion_kind = LEGACY_UNKNOWN for all legacy rows
+    # Evidence records created from source data
+
+async def test_migration_preserves_all_memory_rows():
+    """Every memory row survives migration."""
+    # Insert 100 diverse memories
+    # Run migration
+    # Count still 100, all fields preserved
 ```
 
-### 9.2 Lifecycle Tests
+### 10.2 Lifecycle Tests
 
 ```python
 async def test_lifecycle_pending_to_confirmed():
-    """PENDING → CONFIRMED via POST /confirm"""
+    """PENDING → CONFIRMED"""
     memory = create_memory(status=PENDING)
-    result = confirm_memory(memory.id)
-    assert result.status == "CONFIRMED"
+    confirm_memory(memory.id)
+    assert get_memory(memory.id).is_confirmed == "CONFIRMED"
 
-async def test_lifecycle_pending_to_rejected():
-    """PENDING → REJECTED via POST /reject"""
-    memory = create_memory(status=PENDING)
-    result = reject_memory(memory.id)
-    assert result.status == "REJECTED"
+async def test_lifecycle_manual_create_goes_directly_confirmed():
+    """Manual user creation → USER_STATED + CONFIRMED (not PENDING)"""
+    memory = create_memory(content="I prefer Python", assertion_kind="USER_STATED")
+    assert memory.is_confirmed == "CONFIRMED"
+    assert memory.assertion_kind == "USER_STATED"
+
+async def test_lifecycle_ai_extracted_is_pending():
+    """AI extraction from conversation → USER_STATED + PENDING"""
+    memory = extract_memory_from_conversation(user_said="I prefer Python")
+    assert memory.is_confirmed == "PENDING"
+    assert memory.assertion_kind == "USER_STATED"
 
 async def test_lifecycle_confirmed_to_archived():
     """CONFIRMED → ARCHIVED when last evidence removed"""
     memory = create_memory_with_evidence(count=1)
-    delete_source_evidence(memory.id)
-    result = get_memory(memory.id)
-    assert result.status == "ARCHIVED"
+    remove_evidence(memory.id)
+    assert get_memory(memory.id).is_confirmed == "ARCHIVED"
 
-async def test_lifecycle_archived_to_confirmed():
-    """ARCHIVED → CONFIRMED when new evidence added"""
+async def test_lifecycle_archived_to_pending():
+    """ARCHIVED + new evidence → PENDING (not directly CONFIRMED)"""
     memory = create_memory(status=ARCHIVED)
     add_evidence(memory.id, source_type="DOCUMENT")
-    assert memory.status == "CONFIRMED"
+    assert get_memory(memory.id).is_confirmed == "PENDING"  # NOT CONFIRMED
 
 async def test_illegal_transition_rejected_to_confirmed():
-    """REJECTED → CONFIRMED must fail (no direct path)"""
+    """REJECTED → CONFIRMED must fail"""
     memory = create_memory(status=REJECTED)
     with pytest.raises(HTTPException, match="400"):
-        confirm_memory(memory.id)  # must go through PENDING
+        confirm_memory(memory.id)
 
 async def test_illegal_transition_confirmed_to_pending():
-    """CONFIRMED → PENDING must fail (cannot un-confirm)"""
+    """CONFIRMED → PENDING must fail"""
     memory = create_memory(status=CONFIRMED)
     with pytest.raises(HTTPException, match="400"):
-        update_memory(memory.id, is_confirmed="PENDING")
+        update_memory_status(memory.id, "PENDING")
+
+async def test_illegal_transition_to_superseded():
+    """Any → SUPERSEDED must fail in Phase 1A"""
+    memory = create_memory(status=CONFIRMED)
+    with pytest.raises(HTTPException, match="400"):
+        update_memory_status(memory.id, "SUPERSEDED")
 ```
 
-### 9.3 Evidence Tests
+### 10.3 Evidence Tests
 
 ```python
-async def test_memory_has_multiple_evidence():
-    """A memory can have multiple evidence records from different sources."""
+async def test_memory_multiple_evidence():
+    """Memory can have evidence from different sources."""
     memory = create_memory()
     add_evidence(memory.id, source_type="DOCUMENT", doc_id=doc1)
     add_evidence(memory.id, source_type="CONVERSATION", msg_id=msg1)
-    evidence = list_evidence(memory.id)
-    assert len(evidence) == 2
+    assert len(list_evidence(memory.id)) == 2
 
-async def test_evidence_user_isolation():
-    """User B cannot add evidence to User A's memory."""
+async def test_evidence_user_isolation_service():
+    """Service layer rejects cross-user evidence."""
     memory_a = create_memory_as_user_a()
     with pytest.raises(HTTPException, match="403"):
         add_evidence_as_user_b(memory_a.id)
 
-async def test_evidence_cascade_on_document_delete():
-    """Deleting a document removes its evidence; memory archives if no evidence remains."""
+async def test_evidence_user_isolation_db():
+    """DB-level: composite FK rejects cross-user evidence even without service layer."""
+    # Directly INSERT evidence with memory_id from user A, user_id = user B
+    # PostgreSQL MUST reject: FK violation on composite (memory_id, user_id)
+    with pytest.raises(Exception):  # IntegrityError
+        raw_db_execute(
+            "INSERT INTO memory_evidence (memory_id, user_id, source_type, evidence_kind) "
+            "VALUES (:mid, :uid, 'MANUAL', 'DIRECT_QUOTE')",
+            {"mid": memory_a_id, "uid": user_b_id}
+        )
+
+async def test_evidence_cascade_document_delete():
+    """Document delete → evidence removed → memory archives if no evidence."""
     memory = create_memory_with_document_evidence(doc_id)
     delete_document(doc_id)
-    evidence = list_evidence(memory.id)
-    assert len(evidence) == 0
-    memory = get_memory(memory.id)
-    assert memory.status == "ARCHIVED"
+    assert len(list_evidence(memory.id)) == 0
+    assert get_memory(memory.id).is_confirmed == "ARCHIVED"
 
-async def test_evidence_cascade_preserves_memory_with_other_evidence():
-    """Deleting a document removes its evidence but memory stays CONFIRMED if other evidence exists."""
+async def test_evidence_cascade_preserves_with_other_evidence():
+    """Document delete → evidence removed, but memory stays CONFIRMED if other evidence."""
     memory = create_memory_with_two_evidence(doc_id_1, doc_id_2)
     delete_document(doc_id_1)
-    evidence = list_evidence(memory.id)
-    assert len(evidence) == 1
-    memory = get_memory(memory.id)
-    assert memory.status == "CONFIRMED"
+    assert len(list_evidence(memory.id)) == 1
+    assert get_memory(memory.id).is_confirmed == "CONFIRMED"
 
 async def test_provenance_traceable():
-    """From a memory, you can trace back to its source documents/conversations."""
+    """From memory, trace to source document."""
     memory = create_memory_with_document_evidence(doc_id)
     evidence = list_evidence(memory.id)
     assert evidence[0].source_type == "DOCUMENT"
     assert evidence[0].source_id == doc_id
 ```
 
-### 9.4 Regression Test (Must PASS)
+### 10.4 Regression Test
 
 ```python
 async def test_memory_baseline_regression():
-    """Phase 0 baseline: create preference → confirm → chat recall → answer contains Python."""
-    # This is the EXISTING test_e2e_memory_candidate_flow.
-    # It MUST continue to pass without modification.
+    """Phase 0 baseline MUST pass unchanged."""
     mem = create_memory(content="I prefer Python", type="PREFERENCE", importance=0.9)
     confirm_memory(mem.id)
     chat = send_chat("What programming language do I prefer?", memory_enabled=True)
@@ -696,151 +805,123 @@ async def test_memory_baseline_regression():
 
 ---
 
-## 十、NOT IN SCOPE
+## 十一、NOT IN SCOPE (Item 19)
 
 Phase 1A will NOT implement:
 
-| Excluded | Deferred To |
+| Excluded | Reason |
 |---|---|
-| Semantic Memory retrieval (embedding on Memory) | 1B |
-| Advanced embedding retrieval | 1B |
-| LLM deduplication (AI-based) | 1C |
-| Contradiction detection | 1C |
-| Automatic revision / superseding | 1C |
-| Reflection (offline clustering, conflict detection) | 1D |
-| Belief evolution enhancements | 1D |
-| Prediction / proactive AI | 1E |
-| Agent / autonomous action | 1E |
-| Knowledge graph enhancements | 1F |
-| Memory Graph (visual) | 1F |
-| New dashboard | 1F |
-| New Cognitive Engine | 1G |
-| Memory Engine 2.0 full implementation | 1G |
-| Major UI redesign | 1F |
-| `memory_strengths` / `memory_associations` / `memory_clusters` changes | Deferred |
+| Memory embedding | Deferred to 1B — requires retrieval pipeline design |
+| Semantic retrieval | Deferred to 1B |
+| Reranker | Deferred to 1B |
+| LLM deduplication | Deferred to 1C |
+| Contradiction detection | Deferred to 1C |
+| Automatic revision / superseding | Deferred to 1C |
+| Reflection (offline clustering, conflict detection) | Deferred to 1D |
+| Prediction / proactive AI | Deferred to 1E |
+| Agent / autonomous action | Deferred to 1E |
+| Dashboard redesign | Deferred to 1F |
+| New Cognitive Engine | Deferred to 1G |
+| Memory Engine 2.0 full implementation | Deferred to 1G |
+| Confidence formula implementation | Deferred to 1B (needs eval) |
+| MemoryRevision table | Deferred to 1C |
+
+**Phase 1A delivers:** Memory Claim + Evidence + Lifecycle + Provenance + DB Invariants + Migration Foundation.
 
 ---
 
-## 十一、Proposed Architecture (Phase 1A After Completion)
+## 十二、Proposed Architecture
 
 ```
 User
   │
-  ├── Memory (with assertion_kind, summary, last_accessed_at)
+  ├── Memory
+  │     ├── assertion_kind: USER_STATED | OBSERVED | INFERRED | LEGACY_UNKNOWN
+  │     ├── is_confirmed: PENDING | CONFIRMED | REJECTED | ARCHIVED | SUPERSEDED(1A-only-enum)
   │     │
   │     ├── MemoryEvidence[0..N]
-  │     │     ├── source_type = DOCUMENT → Document
-  │     │     ├── source_type = CONVERSATION → ConversationMessage
-  │     │     ├── source_type = DECISION → Decision
-  │     │     ├── source_type = MANUAL → (no FK)
-  │     │     └── source_type = CORRECTION → ConversationMessage
+  │     │     ├── source_type → DOCUMENT / CONVERSATION / DECISION / MANUAL / CORRECTION / LEGACY_UNKNOWN
+  │     │     └── Composite FK (memory_id, user_id) → memories(memory_id, user_id)
   │     │
-  │     └── status lifecycle:
-  │           PENDING → CONFIRMED / REJECTED
-  │           CONFIRMED → ARCHIVED (evidence cascade)
-  │           ARCHIVED → CONFIRMED (new evidence)
+  │     └── last_used_at (existing, write during recall)
   │
-  ├── Belief (existing, no changes in 1A)
-  └── Decision (existing, no changes in 1A)
+  ├── Belief (existing, no 1A changes)
+  └── Decision (existing, no 1A changes)
 ```
 
 ### Layer Responsibilities
 
 | Layer | Responsibility |
 |---|---|
-| **API Router** | Request parsing, auth, response serialization. No business logic. |
-| **Service** | Lifecycle transitions, evidence cascade, confidence recalculation, user isolation checks. |
-| **Repository** (optional) | If query complexity warrants it. Otherwise, service calls ORM directly. |
-| **Database** | CHECK constraints, FK constraints, trigger for cross-user isolation, indexes. |
-
-**No new Manager / Engine / Analyzer abstractions in 1A.** The existing `MemoryService` handles memory CRUD. Evidence operations are added to the same service. If evidence cascade logic grows complex, it can be extracted to `EvidenceService` — but only if the function exceeds ~200 lines or is independently testable.
+| **API Router** | Request parsing, auth, response serialization |
+| **Service** | Lifecycle transitions, evidence cascade domain operations, user isolation |
+| **Database** | CHECK constraints, composite FK, indexes |
 
 ---
 
-## 十二、Implementation Plan
+## 十三、Implementation Plan
 
-### 12.1 Files to Modify
+### 13.1 Files to Modify
 
 | File | Changes |
 |---|---|
-| `app/models/memory.py` | Add `assertion_kind`, `summary` columns. Update `is_confirmed` CHECK. |
-| `app/models/__init__.py` | Import `MemoryEvidence` model. |
-| `app/schemas/memory.py` | Add `assertion_kind`, `summary` to create/update/response schemas. |
-| `app/api/memory.py` | Add status transition validation. Add evidence endpoints. Add archive/restore. |
-| `app/services/memory_service.py` | (New file — or extend existing service logic in `api/memory.py`). Evidence cascade logic. Confidence recalculation. |
-| `app/services/rag_service.py` | Update `last_accessed_at` on recall. Filter ARCHIVED/SUPERSEDED from recall. |
-| `app/services/memory_extractor.py` | Set `assertion_kind` during extraction. Set `source_type` correctly. |
-| `app/services/document_service.py` | On document delete: trigger evidence cascade → archive if no evidence. |
-| `tests/test_memory.py` | Add lifecycle, evidence, isolation, regression tests. |
-| `tests/test_e2e.py` | Verify baseline regression still passes. |
+| `app/models/memory.py` | Add `assertion_kind`, `summary`. Update CHECK constraint. |
+| `app/models/__init__.py` | Import `MemoryEvidence`. |
+| `app/schemas/memory.py` | Add fields to create/update/response schemas. |
+| `app/api/memory.py` | Status transition validation. Evidence endpoints. Archive endpoint. |
+| `app/services/rag_service.py` | Write `last_used_at` on recall. Filter ARCHIVED/SUPERSEDED. |
+| `app/services/memory_extractor.py` | Set `assertion_kind` + `source_type` during extraction. |
+| `app/services/document_service.py` | Call `on_source_deleted()` on document delete. |
+| `app/main.py` | Remove `init_db()` call (production uses Alembic only). |
+| `tests/test_memory.py` | Add lifecycle, evidence tests. |
 
-### 12.2 Files to Add
+### 13.2 Files to Add
 
 | File | Purpose |
 |---|---|
-| `app/models/evidence.py` | `MemoryEvidence` SQLAlchemy model. |
-| `alembic/versions/002_memory_foundation.py` | Alembic migration for new columns + evidence table + constraints. |
-| `tests/test_memory_lifecycle.py` | Dedicated lifecycle transition tests. |
-| `tests/test_memory_evidence.py` | Dedicated evidence CRUD + cascade tests. |
+| `app/models/evidence.py` | `MemoryEvidence` model |
+| `alembic/versions/001_baseline.py` | Baseline migration (stamp existing schema) |
+| `alembic/versions/002_memory_foundation.py` | Phase 1A migration |
+| `scripts/verify_schema.py` | Schema verification for legacy DB adoption |
+| `tests/test_memory_lifecycle.py` | Lifecycle transition tests |
+| `tests/test_memory_evidence.py` | Evidence CRUD + cascade + DB isolation tests |
+| `tests/test_migration.py` | Migration preservation tests |
 
-### 12.3 Alembic Migration
-
-See §7.2 for full SQL.
-
-1. Generate baseline migration from current schema
-2. Create `002_memory_foundation.py`:
-   - Add `assertion_kind`, `summary` to `memories`
-   - Create `memory_evidence` table
-   - Migrate existing `source` / `source_document_id` → evidence records
-   - Add CHECK constraints
-   - Add trigger for cross-user isolation
-
-### 12.4 Tests
-
-| Test File | Tests |
-|---|---|
-| `test_memory_lifecycle.py` | 6 tests: legal transitions, illegal transitions, delete vs archive |
-| `test_memory_evidence.py` | 5 tests: CRUD, user isolation, cascade on delete, provenance traceable |
-| `test_memory.py` (existing) | 3 existing tests — must pass unchanged |
-| `test_e2e.py` | 1 regression test — must pass unchanged |
-
-### 12.5 Implementation Order
+### 13.3 Implementation Order
 
 ```
-1. Models (MemoryEvidence + Memory updates)
-2. Alembic setup (generate baseline + Phase 1A migration)
-3. Evidence CRUD API + tests
+1. Alembic bootstrap (baseline migration + verify script)
+2. Models (MemoryEvidence + Memory updates)
+3. Phase 1A migration
 4. Lifecycle transition validation + tests
-5. Document delete → evidence cascade
-6. RAG service: last_accessed_at + filter archived
-7. Memory extractor: set assertion_kind + source_type
-8. Full regression test suite
-9. Documentation update
+5. Evidence CRUD API + tests
+6. Document delete → evidence cascade domain operation
+7. RAG service: last_used_at write + filter archived
+8. Memory extractor: set assertion_kind + source_type
+9. Full regression test suite
+10. Remove init_db() production path
 ```
 
-### 12.6 Risks
+### 13.4 Risks
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Migration breaks existing data | **High** | Test on copy of production DB first. Rollback script tested. No field removed. |
-| Evidence cascade triggers on every document delete (perf) | **Medium** | Evidence table indexed on (source_type, source_id). Cascade is O(evidence_count) not O(memory_count). |
-| Frontend breaks on new response fields | **Low** | New fields are additive. Old fields preserved. Frontend uses Optional types. |
-| SQLite tests can't validate PostgreSQL triggers | **Medium** | Trigger is PostgreSQL-only. SQLite tests validate service-level isolation. CI tests validate DB-level. |
-| Cross-user isolation trigger may slow writes | **Low** | Single-row lookup per INSERT. Negligible on modern hardware. |
+| Migration on production DB | **High** | Schema verification before stamp. Tested on DB copy. Rollback tested. |
+| Composite FK (memory_id, user_id) requires memories PK match | **Low** | memories PK is memory_id alone; composite unique is guaranteed by PK + FK. Verified in migration test. |
+| Legacy source parsing is imperfect | **Medium** | Unknown origins → LEGACY_UNKNOWN. No data lost. |
 
-### 12.7 Acceptance Criteria
+### 13.5 Acceptance Criteria
 
-Phase 1A is ACCEPTED when:
-
-1. **Migration**: All existing memories survive migration. Evidence records created from source data.
-2. **Lifecycle**: All legal transitions succeed. All illegal transitions are rejected with 400.
-3. **Evidence**: Memory can have multiple evidence records. User isolation enforced at DB level.
-4. **Cascade**: Document delete → evidence removed → memory archives if no evidence remains. Memory stays CONFIRMED if other evidence exists.
-5. **Provenance**: From any memory, trace back to source document/conversation/decision.
-6. **Regression**: `I prefer Python → confirm → chat → answer contains Python` PASSES.
-7. **Existing tests**: All 56+ existing tests PASS without modification.
-8. **No scope creep**: No embedding, no AI dedup, no reflection, no new dashboard.
+1. **Migration**: Both fresh DB and legacy DB paths work. All existing memories preserved.
+2. **Lifecycle**: Legal transitions succeed. Illegal transitions rejected (400). SUPERSEDED blocked in 1A.
+3. **Evidence**: Multiple evidence per memory. DB-level cross-user rejection via composite FK.
+4. **Cascade**: Document delete → evidence removed → CONFIRMED → ARCHIVED (if 0 evidence). CONFIRMED stays if other evidence exists.
+5. **ARCHIVED + evidence → PENDING** (not CONFIRMED).
+6. **assertion_kind**: Manual = USER_STATED + CONFIRMED. AI extraction = USER_STATED/OBSERVED + PENDING. Legacy = LEGACY_UNKNOWN.
+7. **Regression**: `I prefer Python → confirm → chat → Python` PASSES.
+8. **Existing tests**: All pass unchanged.
+9. **No scope creep**: No embedding, no dedup, no reflection, no confidence formula.
 
 ---
 
-*End of Phase 1A Design Proposal. Awaiting External Review.*
+*Design Revision v2 — Awaiting External Review.*
