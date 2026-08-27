@@ -4,8 +4,9 @@ RAG 检索增强生成服务
 """
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
 from app.models.document import Document
@@ -385,7 +386,19 @@ class RAGService:
         # 总预算 4000 tokens，知识占 3000，记忆占 1000
         context = await self._build_context(message, sources, max_tokens=3000)
         memory_context = await self._build_memory_context(memories, max_tokens=1000)
-        
+
+        # Update last_used_at for memories packed into context
+        if memories:
+            now = datetime.now(timezone.utc)
+            packed_memory_ids = [m.get('memory_id') for m in memories if m.get('memory_id')]
+            if packed_memory_ids:
+                await self.db.execute(
+                    update(Memory).where(
+                        Memory.memory_id.in_(packed_memory_ids)
+                    ).values(last_used_at=now)
+                )
+                await self.db.flush()
+
         # 3. 获取或创建对话
         if conversation_id:
             result = await self.db.execute(

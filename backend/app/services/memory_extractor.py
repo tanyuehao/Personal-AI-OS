@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.memory import Memory, MemoryType
+from app.models.evidence import MemoryEvidence
 from app.services.ai_service import create_ai_service
 
 
@@ -18,6 +19,7 @@ class ExtractedMemory:
     importance: float
     confidence: float
     source: Optional[str] = None
+    assertion_kind: str = "OBSERVED"  # USER_STATED for user messages, OBSERVED for others
 
 
 class MemoryExtractor:
@@ -41,43 +43,51 @@ class MemoryExtractor:
     ) -> List[ExtractedMemory]:
         """
         从对话中提取记忆
-        
+
+        Only extracts from USER messages. Assistant messages are skipped
+        to avoid extracting AI-generated content as user memories.
+
         Args:
             user_id: 用户 ID
             conversation_id: 对话 ID
             messages: 对话消息列表
-        
+
         Returns:
             提取的记忆列表
         """
         if not messages:
             return []
-        
-        # 构建提取提示词
-        extraction_prompt = """分析以下对话，提取用户的重要信息、观点、决策和偏好。
 
-对话内容：
+        # Filter to only USER messages for extraction
+        user_messages = [m for m in messages if m.get("role") == "user"]
+        if not user_messages:
+            return []
+
+        # 构建提取提示词 — only user messages
+        extraction_prompt = """分析以下用户发言，提取用户的重要信息、观点、决策和偏好。
+注意：只从用户的角度提取信息，不要提取AI助手的回复内容。
+
+用户发言：
 """
-        
-        for msg in messages:
-            role = "用户" if msg.get("role") == "user" else "AI"
-            extraction_prompt += f"{role}: {msg.get('content', '')}\n"
-        
+
+        for msg in user_messages:
+            extraction_prompt += f"用户: {msg.get('content', '')}\n"
+
         extraction_prompt += """
 请提取以下类型的信息：
 
 1. FACT (事实): 用户明确陈述的事实信息
    - 重要程度: 0.3-0.5
-   
+
 2. EXPERIENCE (经验): 用户的经验、教训、成功/失败案例
    - 重要程度: 0.6-0.8
-   
+
 3. OPINION (观点): 用户的观点、看法、判断
    - 重要程度: 0.5-0.7
-   
+
 4. DECISION (决策): 用户做出的重要决策
    - 重要程度: 0.7-0.9
-   
+
 5. PREFERENCE (偏好): 用户的偏好、习惯、喜好
    - 重要程度: 0.4-0.6
 
@@ -95,29 +105,29 @@ class MemoryExtractor:
 }
 
 如果没有值得提取的信息，返回空列表 {"memories": []}"""
-        
+
         try:
             ai_service = await self._get_ai_service()
-            
+
             response = await ai_service.chat(
                 messages=[{"role": "user", "content": extraction_prompt}],
                 system_prompt="你是一个专业的信息提取助手。只返回 JSON 格式的结果，不要添加其他说明。",
                 temperature=0.3,
                 max_tokens=2000
             )
-            
+
             # 解析响应
             import json
             content = response.content.strip()
-            
+
             # 尝试提取 JSON
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0]
-            
+
             result = json.loads(content)
-            
+
             memories = []
             for item in result.get("memories", []):
                 memories.append(ExtractedMemory(
@@ -125,11 +135,12 @@ class MemoryExtractor:
                     memory_type=item.get("memory_type", "FACT"),
                     importance=item.get("importance", 0.5),
                     confidence=item.get("confidence", 0.7),
-                    source=item.get("source")
+                    source=item.get("source"),
+                    assertion_kind="USER_STATED"  # Extracted from user messages
                 ))
-            
+
             return memories
-            
+
         except Exception as e:
             print(f"记忆提取失败: {str(e)}")
             return []
@@ -142,17 +153,17 @@ class MemoryExtractor:
     ) -> List[Memory]:
         """
         保存提取的记忆
-        
+
         Args:
             user_id: 用户 ID
             extracted_memories: 提取的记忆列表
             conversation_id: 对话 ID
-        
+
         Returns:
             保存的记忆列表
         """
         saved_memories = []
-        
+
         for extracted in extracted_memories:
             # 检查是否已存在相似记忆
             existing = await self._find_similar_memory(
@@ -160,27 +171,42 @@ class MemoryExtractor:
                 content=extracted.content,
                 memory_type=extracted.memory_type
             )
-            
+
             if existing:
                 # 更新现有记忆的重要性
                 existing.frequency += 1
                 existing.importance = min(1.0, existing.importance + 0.1)
                 saved_memories.append(existing)
             else:
-                # 创建新记忆
+                # 创建新记忆 with assertion_kind
                 memory = Memory(
                     user_id=user_id,
                     memory_type=extracted.memory_type,
                     content=extracted.content,
                     source=extracted.source or f"对话提取 (conversation_id: {conversation_id})",
                     importance=extracted.importance,
-                    confidence=extracted.confidence
+                    confidence=extracted.confidence,
+                    assertion_kind=extracted.assertion_kind,
+                    is_confirmed="PENDING"  # Extracted memories start as PENDING
                 )
                 self.db.add(memory)
+                await self.db.flush()
+
+                # Create CONVERSATION evidence for the extracted memory
+                evidence = MemoryEvidence(
+                    memory_id=memory.memory_id,
+                    user_id=user_id,
+                    source_type="CONVERSATION",
+                    source_id=None,  # conversation_id is string, not UUID
+                    evidence_kind="OBSERVATION",
+                    evidence_strength=extracted.confidence
+                )
+                self.db.add(evidence)
+
                 saved_memories.append(memory)
-        
+
         await self.db.flush()
-        
+
         return saved_memories
     
     async def _find_similar_memory(

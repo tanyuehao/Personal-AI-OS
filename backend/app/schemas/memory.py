@@ -16,6 +16,7 @@ class MemoryCreateRequest(BaseModel):
     source: Optional[str] = Field(None, description="来源描述")
     importance: Optional[float] = Field(0.5, ge=0, le=1, description="重要程度 0-1")
     confidence: Optional[float] = Field(0.8, ge=0, le=1, description="可信程度 0-1")
+    summary: Optional[str] = Field(None, max_length=5000, description="记忆摘要")
 
 
 class MemoryUpdateRequest(BaseModel):
@@ -24,7 +25,7 @@ class MemoryUpdateRequest(BaseModel):
     memory_type: Optional[str] = None
     importance: Optional[float] = Field(None, ge=0, le=1)
     confidence: Optional[float] = Field(None, ge=0, le=1)
-    is_confirmed: Optional[str] = None
+    summary: Optional[str] = Field(None, max_length=5000, description="记忆摘要")
 
 
 class MemorySearchRequest(BaseModel):
@@ -47,10 +48,12 @@ class MemoryResponse(BaseModel):
     confidence: float
     frequency: int
     is_confirmed: str
+    assertion_kind: str
+    summary: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     last_used_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
 

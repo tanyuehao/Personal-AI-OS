@@ -5,6 +5,7 @@ Personal AI OS - Models Package
 from app.models.user import User, RefreshToken
 from app.models.document import Document, DocumentStatus
 from app.models.memory import Memory, MemoryType
+from app.models.evidence import MemoryEvidence
 from app.models.knowledge import KnowledgeChunk
 from app.models.conversation import Conversation, ConversationMessage
 from app.models.belief import Belief, BeliefHistory
@@ -19,6 +20,7 @@ __all__ = [
     "DocumentStatus",
     "Memory",
     "MemoryType",
+    "MemoryEvidence",
     "KnowledgeChunk",
     "Conversation",
     "ConversationMessage",

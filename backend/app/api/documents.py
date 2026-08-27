@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models.user import User
 from app.models.document import Document, DocumentStatus
+from app.services.memory_lifecycle import on_source_deleted
 from app.schemas.document import (
     DocumentResponse,
     DocumentListResponse,
@@ -235,6 +236,9 @@ async def delete_document(
     # 删除文件
     if os.path.exists(document.file_path):
         os.remove(document.file_path)
+
+    # Cascade evidence before deleting the document
+    await on_source_deleted("DOCUMENT", document.document_id, db)
 
     # 先删除关联的知识切片
     from app.models.knowledge import KnowledgeChunk

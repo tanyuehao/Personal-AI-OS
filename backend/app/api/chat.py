@@ -9,6 +9,7 @@ from sqlalchemy import select, text
 
 from app.core.database import get_db
 from app.core.security import get_current_user_id
+from app.services.memory_lifecycle import on_sources_deleted
 from app.services.rag_service import RAGService, create_rag_service
 from app.schemas.chat import (
     ChatRequest,
@@ -122,6 +123,11 @@ async def delete_conversation(
         )
     )
     messages = messages_result.scalars().all()
+
+    # Cascade evidence for all message sources before deleting messages
+    message_ids = [msg.message_id for msg in messages]
+    await on_sources_deleted("CONVERSATION", message_ids, db)
+
     for msg in messages:
         await db.delete(msg)
 

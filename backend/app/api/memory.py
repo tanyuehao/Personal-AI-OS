@@ -10,6 +10,7 @@ from sqlalchemy import select, func
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models.memory import Memory, MemoryType
+from app.models.evidence import MemoryEvidence
 from app.schemas.memory import (
     MemoryCreateRequest,
     MemoryUpdateRequest,
@@ -17,6 +18,8 @@ from app.schemas.memory import (
     MemoryListResponse,
     MemorySearchRequest
 )
+from app.schemas.evidence import EvidenceCreateRequest, EvidenceResponse
+from app.services.memory_lifecycle import transition_memory, add_evidence_to_memory, remove_evidence_from_memory
 
 router = APIRouter(prefix="/memory", tags=["记忆管理"])
 
@@ -47,7 +50,23 @@ async def create_memory(
         confidence=request.confidence or 0.8
     )
 
+    # Server-controlled fields
+    memory.assertion_kind = "USER_STATED"  # Server-controlled, ignore client
+    memory.is_confirmed = "CONFIRMED"  # Manual creation is immediately confirmed
+
     db.add(memory)
+    await db.flush()
+
+    # Atomically create MANUAL evidence
+    evidence = MemoryEvidence(
+        memory_id=memory.memory_id,
+        user_id=current_user_id,
+        source_type="MANUAL",
+        source_id=None,
+        evidence_kind="DIRECT_QUOTE",
+        evidence_strength=1.0
+    )
+    db.add(evidence)
     await db.flush()
     await db.refresh(memory)
 
@@ -201,7 +220,7 @@ async def confirm_all_memories(
     memories = result.scalars().all()
 
     for memory in memories:
-        memory.is_confirmed = "CONFIRMED"
+        transition_memory(memory, "CONFIRMED")
 
     await db.flush()
 
@@ -223,7 +242,7 @@ async def reject_all_memories(
     memories = result.scalars().all()
 
     for memory in memories:
-        memory.is_confirmed = "REJECTED"
+        transition_memory(memory, "REJECTED")
 
     await db.flush()
 
@@ -286,8 +305,6 @@ async def update_memory(
         memory.importance = request.importance
     if request.confidence is not None:
         memory.confidence = request.confidence
-    if request.is_confirmed is not None:
-        memory.is_confirmed = request.is_confirmed
 
     await db.flush()
     await db.refresh(memory)
@@ -340,7 +357,11 @@ async def confirm_memory(
             detail="记忆不存在"
         )
 
-    memory.is_confirmed = "CONFIRMED"
+    # Idempotent: already CONFIRMED is fine
+    if memory.is_confirmed == "CONFIRMED":
+        return MemoryResponse.model_validate(memory)
+
+    transition_memory(memory, "CONFIRMED")
     await db.flush()
     await db.refresh(memory)
 
@@ -368,8 +389,153 @@ async def reject_memory(
             detail="记忆不存在"
         )
 
-    memory.is_confirmed = "REJECTED"
+    transition_memory(memory, "REJECTED")
     await db.flush()
     await db.refresh(memory)
 
     return MemoryResponse.model_validate(memory)
+
+
+# ========== Evidence CRUD endpoints ==========
+
+@router.get("/{memory_id}/evidence", response_model=List[EvidenceResponse])
+async def list_evidence(
+    memory_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """列出记忆的所有证据"""
+    # Validate memory ownership
+    result = await db.execute(
+        select(Memory).where(
+            Memory.memory_id == memory_id,
+            Memory.user_id == current_user_id
+        )
+    )
+    memory = result.scalar_one_or_none()
+
+    if not memory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="记忆不存在"
+        )
+
+    evidence_result = await db.execute(
+        select(MemoryEvidence).where(
+            MemoryEvidence.memory_id == memory_id
+        ).order_by(MemoryEvidence.created_at.desc())
+    )
+    evidence_records = evidence_result.scalars().all()
+
+    return [EvidenceResponse.model_validate(ev) for ev in evidence_records]
+
+
+@router.post("/{memory_id}/evidence", response_model=EvidenceResponse, status_code=status.HTTP_201_CREATED)
+async def add_evidence(
+    memory_id: str,
+    request: EvidenceCreateRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """为记忆添加证据"""
+    # Validate memory ownership
+    result = await db.execute(
+        select(Memory).where(
+            Memory.memory_id == memory_id,
+            Memory.user_id == current_user_id
+        )
+    )
+    memory = result.scalar_one_or_none()
+
+    if not memory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="记忆不存在"
+        )
+
+    # Validate source ownership if source_id is provided
+    if request.source_id and request.source_type in ("CONVERSATION", "DOCUMENT", "DECISION"):
+        from app.models.conversation import Conversation
+        from app.models.document import Document
+
+        if request.source_type == "CONVERSATION":
+            src_result = await db.execute(
+                select(Conversation).where(
+                    Conversation.conversation_id == request.source_id,
+                    Conversation.user_id == current_user_id
+                )
+            )
+            if not src_result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="来源对话不存在或不属于当前用户"
+                )
+        elif request.source_type == "DOCUMENT":
+            src_result = await db.execute(
+                select(Document).where(
+                    Document.document_id == request.source_id,
+                    Document.user_id == current_user_id
+                )
+            )
+            if not src_result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="来源文档不存在或不属于当前用户"
+                )
+
+    evidence = await add_evidence_to_memory(
+        memory=memory,
+        db=db,
+        source_type=request.source_type,
+        source_id=request.source_id,
+        source_span=request.source_span,
+        evidence_kind=request.evidence_kind,
+        evidence_strength=request.evidence_strength,
+        observed_at=request.observed_at
+    )
+    await db.flush()
+    await db.refresh(evidence)
+
+    return EvidenceResponse.model_validate(evidence)
+
+
+@router.delete("/{memory_id}/evidence/{evidence_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_evidence(
+    memory_id: str,
+    evidence_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """删除记忆的证据"""
+    # Validate memory ownership
+    result = await db.execute(
+        select(Memory).where(
+            Memory.memory_id == memory_id,
+            Memory.user_id == current_user_id
+        )
+    )
+    memory = result.scalar_one_or_none()
+
+    if not memory:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="记忆不存在"
+        )
+
+    # Find the evidence
+    ev_result = await db.execute(
+        select(MemoryEvidence).where(
+            MemoryEvidence.evidence_id == evidence_id,
+            MemoryEvidence.memory_id == memory_id
+        )
+    )
+    evidence = ev_result.scalar_one_or_none()
+
+    if not evidence:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="证据不存在"
+        )
+
+    await remove_evidence_from_memory(memory, evidence, db)
+    await db.flush()
