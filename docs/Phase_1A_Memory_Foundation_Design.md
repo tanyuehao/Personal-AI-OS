@@ -1,6 +1,6 @@
 # Phase 1A — Memory Foundation Design
 
-> **Status**: Design Revision v2.1 — Awaiting External Review  
+> **Status**: Design Revision v2.1 Final Errata — Implementation Approved  
 > **Scope**: v0.2 Reliable Memory — Foundation Layer  
 > **Constraint**: No code changes. Design only.
 
@@ -981,4 +981,161 @@ User
 
 ---
 
-*Design Revision v2.1 — Awaiting External Review.*
+## Final Errata
+
+### E1. Legacy source_document_id — ON DELETE SET NULL
+
+The existing FK `memories.source_document_id → documents.document_id` must use `ON DELETE SET NULL`. This is a legacy compatibility field; when the source document is deleted, the FK becomes NULL automatically. The evidence cascade (`on_source_deleted`) handles lifecycle re-evaluation independently.
+
+```sql
+-- Migration: drop existing FK, re-create with SET NULL
+ALTER TABLE memories DROP CONSTRAINT IF EXISTS fk_memory_source_document;
+ALTER TABLE memories ADD CONSTRAINT fk_memory_source_document
+    FOREIGN KEY (source_document_id) REFERENCES documents(document_id)
+    ON DELETE SET NULL;
+```
+
+### E2. Legacy Conversation Provenance Backfill
+
+`source_type = CONVERSATION` requires `source_id` pointing to `conversation_messages.message_id`. During migration:
+
+- If legacy `source` text can be **reliably parsed** to resolve a real `message_id` → `source_type=CONVERSATION, source_id=message_id`
+- Otherwise → `source_type=LEGACY_UNKNOWN, source_id=NULL, source_span=original_source_text`
+
+**Never** use `conversation_id` as `message_id`. Never produce `source_type=CONVERSATION, source_id=NULL`. Prefer unknown provenance over fabricated precision.
+
+### E3. 001_baseline Must Create Full Schema
+
+`001_baseline.py` is NOT a no-op stamp. For fresh databases, `alembic upgrade head` runs both 001 and 002 sequentially:
+
+- `001_baseline.upgrade()` creates the **entire legacy schema** (all existing tables, columns, indexes, constraints matching the current `create_all()` output)
+- `002_memory_foundation.upgrade()` applies Phase 1A additions
+
+For legacy databases: `verify_schema` → `alembic stamp 001_baseline` → `alembic upgrade head` (runs 002 only).
+
+`verify_schema` must check both **schema** (tables, columns, types, PKs, FKs, indexes) AND **data** (invalid statuses, out-of-range confidence/importance, dangling source_document_id, cross-user ownership).
+
+### E4. Whole Conversation Deletion
+
+Delete path for `DELETE /conversations/{id}`:
+
+1. Collect all `message_id` values from the conversation
+2. Call `on_sources_deleted("CONVERSATION", message_ids, db)` — batch operation
+3. Delete conversation messages
+4. Delete conversation
+5. All in one transaction
+
+```python
+async def on_sources_deleted(
+    source_type: str, source_ids: List[UUID], db: AsyncSession
+):
+    """Batch domain operation: delete evidence for multiple source entities."""
+    result = await db.execute(
+        select(MemoryEvidence).where(
+            MemoryEvidence.source_type == source_type,
+            MemoryEvidence.source_id.in_(source_ids)
+        )
+    )
+    evidence_records = result.scalars().all()
+    for ev in evidence_records:
+        await db.delete(ev)
+    # Re-evaluate affected memories
+    affected = {ev.memory_id for ev in evidence_records}
+    for mid in affected:
+        remaining = await db.execute(
+            select(func.count()).select_from(MemoryEvidence)
+            .where(MemoryEvidence.memory_id == mid)
+        )
+        if remaining.scalar() == 0:
+            mem_result = await db.execute(select(Memory).where(Memory.memory_id == mid))
+            mem = mem_result.scalar_one_or_none()
+            if mem and mem.is_confirmed in ("CONFIRMED", "PENDING"):
+                mem.is_confirmed = "ARCHIVED"
+```
+
+### E5. Evidence CRUD Lifecycle Consistency
+
+DELETE last evidence:
+- PENDING → ARCHIVED
+- CONFIRMED → ARCHIVED
+
+ADD evidence:
+- PENDING → PENDING (stays)
+- CONFIRMED → CONFIRMED (stays)
+- ARCHIVED → PENDING (re-candidate)
+- REJECTED → **409 Conflict** (create new Memory instead)
+- SUPERSEDED → **Phase 1A forbidden** (400)
+
+Service layer uses the same lifecycle logic for both API-driven evidence changes and source-deletion cascades.
+
+### E6. Downgrade Semantics
+
+**Schema downgrade** (Alembic downgrade): supported. Removes Phase 1A columns, table, constraints.
+
+**Operational rollback** after Phase 1A data writes: **fails closed**. If the database contains Phase 1A-only data (ARCHIVED status, SUPERSEDED status, evidence records), the downgrade must detect this and abort. Operator must manually resolve incompatible data before downgrading.
+
+```python
+def downgrade():
+    # Check for Phase 1A data that would be orphaned
+    # If any ARCHIVED/SUPERSEDED memories exist → abort
+    # If any memory_evidence records exist → abort
+    # Only proceed if no Phase 1A data written
+    ...
+```
+
+---
+
+## Implementation Corrections
+
+### A. Server-controlled assertion_kind
+
+`POST /memory` ignores client-provided `assertion_kind`. Server always sets `USER_STATED` for manual creation. Client field is silently discarded.
+
+### B. LEGACY_UNKNOWN only in migration
+
+After migration backfill completes, no application code path may produce `LEGACY_UNKNOWN`. All writers must explicitly set `assertion_kind`. If a code path fails to set it, the DB CHECK constraint catches it rather than silently defaulting.
+
+### C. Evidence provenance-shape constraint
+
+```sql
+ALTER TABLE memory_evidence ADD CONSTRAINT chk_evidence_provenance_shape
+    CHECK (
+        (source_type IN ('DOCUMENT', 'CONVERSATION', 'DECISION') AND source_id IS NOT NULL)
+        OR
+        (source_type IN ('MANUAL', 'LEGACY_UNKNOWN') AND source_id IS NULL)
+    );
+```
+
+### D. memory_type CHECK constraint
+
+Phase 1A adds a CHECK constraint to enforce the stable type contract:
+
+```sql
+ALTER TABLE memories ADD CONSTRAINT chk_memory_type
+    CHECK (memory_type IN ('FACT', 'EXPERIENCE', 'OPINION', 'DECISION', 'PREFERENCE'));
+```
+
+### E. last_used_at test semantics
+
+Test verifies that **only** memory IDs actually packed into the LLM context get `last_used_at` updated. Tests the context-packing boundary, not retrieval correctness.
+
+---
+
+## v2.1 Errata — Acceptance Criteria (Updated)
+
+1. **Migration**: Fresh DB and legacy DB paths work. 001 creates full schema. All memories preserved.
+2. **Schema Authority**: Alembic sole authority. No `create_all()` in production.
+3. **Lifecycle**: Legal transitions pass. Illegal rejected. SUPERSEDED blocked. PENDING/CONFIRMED → ARCHIVED on evidence loss. ARCHIVED + evidence → PENDING. REJECTED + add evidence → 409.
+4. **Evidence**: Multiple evidence per memory. DB composite FK + provenance-shape constraint. Service validates source entity ownership.
+5. **Atomic manual creation**: `POST /memory` creates memory + MANUAL evidence atomically. assertion_kind forced to USER_STATED.
+6. **Deletion cascade**: Document/ConversationMessage/Conversation/Decision delete → batch evidence cascade → lifecycle re-evaluation. All in one transaction.
+7. **last_used_at**: Written only when memory IDs are packed into LLM context.
+8. **FK fix**: `source_document_id` uses ON DELETE SET NULL.
+9. **Regression**: `I prefer Python → confirm → chat → Python` PASSES.
+10. **Existing tests**: All pass unchanged.
+11. **Downgrade**: Schema downgrade supported. Operational downgrade fails closed if Phase 1A data exists.
+12. **No scope creep**: No embedding, no confidence formula, no superseding, no user-driven archive, no reflection.
+
+---
+
+*Design Revision v2.1 Final Errata — Implementation Approved.*
