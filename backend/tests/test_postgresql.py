@@ -166,18 +166,27 @@ async def test_aurora_rag_strict(client, auth_headers):
 
 @pytest.mark.asyncio
 async def test_memory_lifecycle(client, auth_headers):
-    """测试记忆生命周期"""
+    """测试记忆生命周期 — Phase 1A: manual create goes directly to CONFIRMED"""
     create_r = await client.post("/api/v1/memory",
         json={"content": "Test memory", "memory_type": "FACT", "importance": 0.8},
         headers=auth_headers
     )
     assert create_r.status_code == 201
     memory_id = create_r.json()["memory_id"]
-    assert create_r.json()["is_confirmed"] == "PENDING"
+    # Phase 1A: manual creation is USER_STATED + CONFIRMED (not PENDING)
+    assert create_r.json()["is_confirmed"] == "CONFIRMED"
+    assert create_r.json()["assertion_kind"] == "USER_STATED"
 
+    # Confirm is idempotent on CONFIRMED
     confirm_r = await client.post(f"/api/v1/memory/{memory_id}/confirm", headers=auth_headers)
     assert confirm_r.status_code == 200
     assert confirm_r.json()["is_confirmed"] == "CONFIRMED"
+
+    # Verify evidence was atomically created
+    ev_r = await client.get(f"/api/v1/memory/{memory_id}/evidence", headers=auth_headers)
+    assert ev_r.status_code == 200
+    assert len(ev_r.json()) >= 1
+    assert ev_r.json()[0]["source_type"] == "MANUAL"
 
     delete_r = await client.delete(f"/api/v1/memory/{memory_id}", headers=auth_headers)
     assert delete_r.status_code == 204
